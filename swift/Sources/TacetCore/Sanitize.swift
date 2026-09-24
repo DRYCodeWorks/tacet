@@ -28,18 +28,33 @@ public enum Sanitize {
     }
 
     /// Replace control characters and Unicode line separators with a space,
-    /// collapse all remaining whitespace runs to a single space, and trim.
+    /// insert spacing after `.?!` before uppercase text, collapse whitespace,
+    /// and trim.
     public static func sanitize(_ raw: String) -> String {
         var out = String.UnicodeScalarView()
-        for s in raw.unicodeScalars {
-            if isControl(s) || isLineSeparator(s) {
+        var sentenceBoundaryPending = false
+        for scalar in raw.unicodeScalars {
+            let value = isControl(scalar) || isLineSeparator(scalar) ? " " : scalar
+            if value.properties.isWhitespace {
+                sentenceBoundaryPending = false
+            } else if sentenceBoundaryPending && value.properties.isUppercase {
                 out.append(" ")
-            } else {
-                out.append(s)
             }
+            out.append(value)
+            sentenceBoundaryPending = isSentenceEnd(value)
+                || (sentenceBoundaryPending && isClosingQuoteOrBracket(value))
         }
         return String(out)
             .split(whereSeparator: { $0.isWhitespace })
             .joined(separator: " ")
+    }
+
+    private static func isSentenceEnd(_ scalar: Unicode.Scalar) -> Bool {
+        scalar == "." || scalar == "!" || scalar == "?"
+    }
+
+    private static func isClosingQuoteOrBracket(_ scalar: Unicode.Scalar) -> Bool {
+        scalar == "\"" || scalar == "'" || scalar == "”" || scalar == "’"
+            || scalar == "»" || scalar == ")" || scalar == "]" || scalar == "}"
     }
 }

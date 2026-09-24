@@ -26,7 +26,7 @@ final class E2ETests: XCTestCase {
     func testFullDictationRoundTrip() async throws {
         // 1. Fake whisper-server: answer /inference multipart POST.
         let whisper = try MiniHTTPServer(responder: { _ in
-            (200, Data("{\"text\":\"hello  world\"}".utf8))
+            (200, Data("{\"text\":\"hello  world.First sentence.Second sentence.\"}".utf8))
         })
         whisper.start()
         defer { whisper.stop() }
@@ -48,8 +48,8 @@ final class E2ETests: XCTestCase {
             key: "e2ekey")
         let outcome = client.dictate(wav: WAVFixtures.loudWAV())
 
-        // 4. Server sanitises "hello  world" → "hello world".
-        XCTAssertEqual(outcome, .pasted("hello world"))
+        // Server collapses whitespace and repairs missing spaces between sentences.
+        XCTAssertEqual(outcome, .pasted("hello world. First sentence. Second sentence."))
         XCTAssertEqual(whisper.requestCount, 1)
     }
 

@@ -18,6 +18,18 @@ final class SanitizeTests: XCTestCase {
     func testTrims() {
         XCTAssertEqual(Sanitize.sanitize("  padded  "), "padded")
     }
+    func testRepairsMissingSpacesBetweenSentences() {
+        XCTAssertEqual(
+            Sanitize.sanitize("First. Second!Third? “Fourth.”Fifth"),
+            "First. Second! Third? “Fourth.” Fifth")
+    }
+
+    func testDoesNotSplitDecimalsOrLowercaseContinuations() {
+        XCTAssertEqual(
+            Sanitize.sanitize("Version 3.14 is on example.com"),
+            "Version 3.14 is on example.com")
+    }
+
     func testHostileEscapeSequenceNeutralised() {
         // A full CSI sequence must never survive as a control sequence.
         XCTAssertEqual(Sanitize.sanitize("ok\u{001B}[31mred"), "ok [31mred")

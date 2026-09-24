@@ -48,7 +48,7 @@ exposed to nothing.
         X-Tacet-Key                       │
         Content-Type: audio/wav          ├─► RMS energy gate (silence → "")
                                          ├─► whisper-server (model resident)
-                                         └─► sanitize (collapse to one line)
+                                         └─► sanitize (repair spacing before uppercase text; collapse to one line)
                                     ◄── 200 {"text": "..."}
   ├─► put the text on the clipboard
   └─► synthesize ⌘V into the FOCUSED app
