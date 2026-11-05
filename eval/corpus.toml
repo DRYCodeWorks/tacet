@@ -1,0 +1,269 @@
+# tacet's accuracy corpus, read by eval/tacet_eval.py.
+#
+# Every [[utterance]] is spoken once per voice by macOS `say`, converted to the
+# 16 kHz mono 16-bit WAV tacet records, and sent to a private whisper-server.
+#
+#   id      stable name; the cache key and the row in the per-clip report
+#   text    the reference: what a user who said it wants pasted
+#   spoken  optional; what `say` is given when it would mangle `text` (tmux,
+#           kubectl, file paths). It stands in for how a person says it. It is
+#           never scored against.
+#
+# References are written the way the text should come out, symbols included
+# (/etc/hosts, --dry-run). The scorer's normalization reads symbols as the words
+# a person speaks for them, so "/etc/hosts" and "slash etc slash hosts" score
+# the same: the eval measures recognition, not formatting.
+#
+# Generated audio lives in eval/.cache/, which is gitignored. Editing a line
+# here regenerates that line's audio on the next run.
+
+# Distinct English accents that ship with macOS: US, UK, Australian, Irish.
+voices = ["Samantha", "Daniel", "Karen", "Moira"]
+
+# --- Terminal and coding-agent dictation ------------------------------------
+
+[[utterance]]
+id = "pg-migration"
+text = "Run the Postgres migration before you restart the API server."
+
+[[utterance]]
+id = "k8s-pods"
+text = "Use kubectl to list the pods in the staging namespace."
+spoken = "Use cube control to list the pods in the staging namespace."
+
+[[utterance]]
+id = "tmux-split"
+text = "Split the tmux window and run the tests in the right pane."
+spoken = "Split the tee mux window and run the tests in the right pane."
+
+[[utterance]]
+id = "clickhouse-order-by"
+text = "The ClickHouse table needs a different ORDER BY key."
+spoken = "The ClickHouse table needs a different order by key."
+
+[[utterance]]
+id = "terraform-plan"
+text = "Run terraform plan and show me what it wants to destroy."
+
+[[utterance]]
+id = "open-pr"
+text = "Open a PR against main and ask for a review."
+spoken = "Open a P R against main and ask for a review."
+
+[[utterance]]
+id = "schema-column"
+text = "Add a nullable column to the users schema."
+
+[[utterance]]
+id = "git-force-flag"
+text = "Push the branch with --force-with-lease."
+spoken = "Push the branch with dash dash force with lease."
+
+[[utterance]]
+id = "etc-hosts"
+text = "Add the new host to /etc/hosts."
+spoken = "Add the new host to slash etc slash hosts."
+
+[[utterance]]
+id = "readme-path"
+text = "Update the README.md in the docs folder."
+spoken = "Update the read me dot M D in the docs folder."
+
+[[utterance]]
+id = "swift-file"
+text = "The bug is in WhisperClient.swift, in the multipart body."
+spoken = "The bug is in WhisperClient dot swift, in the multipart body."
+
+[[utterance]]
+id = "clone-repo"
+text = "Clone the repo and check out the release branch."
+
+[[utterance]]
+id = "rebase-main"
+text = "Rebase onto main and fix the merge conflicts."
+
+[[utterance]]
+id = "cli-dry-run"
+text = "Run the installer with --dry-run first."
+spoken = "Run the installer with dash dash dry run first."
+
+[[utterance]]
+id = "docker-compose"
+text = "Restart the Docker container and tail the logs."
+
+[[utterance]]
+id = "env-var"
+text = "Set the DATABASE_URL environment variable."
+spoken = "Set the database underscore URL environment variable."
+
+[[utterance]]
+id = "json-response"
+text = "The endpoint returns JSON with a text field."
+
+[[utterance]]
+id = "yaml-config"
+text = "The workflow YAML is missing a timeout."
+
+[[utterance]]
+id = "grep-todo"
+text = "Grep the source tree for every TODO comment."
+spoken = "Grep the source tree for every to do comment."
+
+[[utterance]]
+id = "port-number"
+text = "The server listens on port 8080 on localhost."
+spoken = "The server listens on port eighty eighty on localhost."
+
+[[utterance]]
+id = "unit-tests"
+text = "Write unit tests for the parser and run pytest."
+
+[[utterance]]
+id = "launchd-plist"
+text = "The launchd plist never loaded after the reboot."
+spoken = "The launch D plist never loaded after the reboot."
+
+[[utterance]]
+id = "ssh-mosh"
+text = "Connect over SSH, then switch to mosh on the laptop."
+
+[[utterance]]
+id = "clickhouse-mv"
+text = "Drop the materialized view and rebuild it from the raw table."
+
+[[utterance]]
+id = "terraform-state"
+text = "Do not touch the Terraform state file by hand."
+
+[[utterance]]
+id = "kubernetes-deploy"
+text = "Scale the Kubernetes deployment to three replicas."
+
+[[utterance]]
+id = "postgres-index"
+text = "Add an index on the created at column in Postgres."
+
+[[utterance]]
+id = "claude-code"
+text = "Ask Claude Code to refactor the function into two smaller ones."
+
+[[utterance]]
+id = "home-config"
+text = "The config lives in ~/.config/tacet/config.toml."
+spoken = "The config lives in tilde slash dot config slash tacet slash config dot tommel."
+
+[[utterance]]
+id = "type-error"
+text = "The build fails with a type error in the client module."
+
+[[utterance]]
+id = "npm-install"
+text = "Delete the lock file and run npm install again."
+spoken = "Delete the lock file and run N P M install again."
+
+[[utterance]]
+id = "http-status"
+text = "The health check returns a 503 until the model loads."
+spoken = "The health check returns a five oh three until the model loads."
+
+# --- Ordinary sentences -------------------------------------------------------
+
+[[utterance]]
+id = "lunch"
+text = "Let's grab lunch after the standup tomorrow."
+
+[[utterance]]
+id = "running-late"
+text = "I'm running about ten minutes late, start without me."
+
+[[utterance]]
+id = "thanks-review"
+text = "Thanks for the quick review, I'll fix those comments tonight."
+
+[[utterance]]
+id = "weather"
+text = "It looks like rain this afternoon, so bring an umbrella."
+
+[[utterance]]
+id = "meeting-move"
+text = "Can we move the meeting to Thursday at three?"
+
+[[utterance]]
+id = "groceries"
+text = "We need milk, eggs, and a loaf of bread."
+
+[[utterance]]
+id = "invoice"
+text = "Please send the invoice by the end of the month."
+
+[[utterance]]
+id = "question"
+text = "Did you get a chance to look at the draft I sent?"
+
+[[utterance]]
+id = "dog-walk"
+text = "I'll walk the dog when I get home."
+
+[[utterance]]
+id = "sounds-good"
+text = "Sounds good, let me know if anything changes."
+
+[[utterance]]
+id = "flight"
+text = "My flight lands at seven fifteen on Sunday evening."
+
+[[utterance]]
+id = "book"
+text = "I finished the book you lent me and loved the ending."
+
+# --- Silence and near-silence -------------------------------------------------
+#
+# Synthesised in Python from a fixed seed, so every run sends the same bytes.
+# `dbfs` is the RMS level relative to full scale. tacet drops anything below
+# RMS 150 (about -47 dBFS) before whisper sees it, so the clips above that line
+# are the ones whose hallucinations would reach a user.
+#
+#   kind = "zero"    digital silence
+#   kind = "white"   white noise
+#   kind = "brown"   integrated (room-tone-like) noise
+#   kind = "hum"     a mains-hum sine
+
+[[silence]]
+id = "zero-1s"
+kind = "zero"
+seconds = 1.0
+
+[[silence]]
+id = "zero-3s"
+kind = "zero"
+seconds = 3.0
+
+[[silence]]
+id = "white-60db"
+kind = "white"
+seconds = 2.0
+dbfs = -60
+
+[[silence]]
+id = "brown-50db"
+kind = "brown"
+seconds = 3.0
+dbfs = -50
+
+[[silence]]
+id = "white-40db"
+kind = "white"
+seconds = 2.0
+dbfs = -40
+
+[[silence]]
+id = "brown-35db"
+kind = "brown"
+seconds = 3.0
+dbfs = -35
+
+[[silence]]
+id = "hum-40db"
+kind = "hum"
+seconds = 2.0
+dbfs = -40

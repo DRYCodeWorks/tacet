@@ -369,6 +369,127 @@ never the content — of each transcript; `status.json` carries the live
 microphone, Accessibility and hotkey state. A flake an hour old otherwise leaves
 no evidence anywhere.
 
+## Measuring accuracy
+
+`eval/tacet_eval.py` measures the transcription leg on its own: how accurate
+and how fast whisper-server is with tacet's model and flags.
+
+It has two kinds of input. The shipped corpus is synthetic: 44 sentences
+spoken by macOS `say`. It is a smoke test, good for "did this flag break
+something" and for server latency. It is too small and too clean to settle an
+accuracy question: one word moves a voice's WER by about a quarter of a point,
+and a text-to-speech voice has no microphone, no room and no hesitation. For
+accuracy, record your own voice ([below](#recording-your-own-voice)) and score
+that.
+
+```bash
+uv run python eval/tacet_eval.py            # human-readable, worst clips listed
+uv run python eval/tacet_eval.py --json     # one JSON object on stdout
+```
+
+It speaks the 44 utterances in `eval/corpus.toml` with macOS `say` in four
+voices (US, UK, Australian, Irish). Most of them are terminal and coding-agent
+dictation: Postgres, tmux, kubectl, flags, file paths read out loud. It
+converts each one with `afconvert` to the 16 kHz mono 16-bit WAV tacet records,
+and caches the audio in `eval/.cache/` (gitignored). Then it starts its own
+whisper-server on a free loopback port, with `--model` and the flags
+`install-server.sh` renders. It POSTs each clip to `/inference` exactly as
+`WhisperClient.swift` does, one at a time after one untimed warm-up, and stops
+the server at the end. The live services on 8910 and 8911 are never touched.
+The first run takes about two minutes. Later runs take about one.
+
+Pass-throughs for experiments: `--prompt TEXT`, `--beam-size N`, and
+`--server-arg=FLAG` for any other whisper-server flag, repeatable and
+shell-split (write it with `=`, e.g. `--server-arg="--entropy-thold 2.8"`).
+`--model`, `--voices` and `--corpus` swap the other inputs. Every clip's
+reference, transcript, errors and latency go to `eval/.cache/last-run.json` for
+diffing two runs.
+
+**What it reports.** Word error rate is total word errors over total reference
+words, overall and per voice. It is not clamped, so a model that hallucinates
+can score above 1. Latency is the p50 and p95 wall time of the speech requests,
+by nearest rank. The silence count is how many of the 7 silence and
+near-silence clips came back with a letter or digit. That is the same test
+tacet applies before it pastes anything. The report also says how many of those
+clips are loud enough to pass tacet's RMS gate (150), since only those would
+ever reach a user.
+
+**Normalization**, applied to both reference and transcript before scoring:
+
+- Case and punctuation never count. Apostrophes are deleted.
+- Symbols read as the words people say for them: `/etc/hosts` scores the
+  same as "slash etc slash hosts", and `--dry-run` the same as "dash dash dry
+  run". The eval measures recognition, not formatting.
+- Hyphenated compounds close up (`stand-up` = `standup`).
+- Whisper splitting a word never counts: "CH migrate" = `ch-migrate`, "TKT
+  1687" = `TKT-1687`. Gluing two words together ("Ontomain") still does.
+- Spelled-out numbers become digits ("twenty five" = 25), and `7:15` = `7.15` =
+  "seven fifteen".
+
+The full rules are in the `normalize()` docstring, and `tests/test_eval.py`
+pins them.
+
+**Baseline, 2026-11-05** (Apple M4 Max, whisper.cpp 1.8.4,
+ggml-large-v3-turbo, production flags, empty `--prompt`):
+
+| | |
+|---|---|
+| WER | 3.53%, 58 of 1,644 words (Samantha 3.16%, Daniel 2.68%, Karen 4.62%, Moira 3.65%) |
+| latency | p50 242 ms, p95 264 ms |
+| silence | 2 of 7 clips returned text ("you" on digital silence). Both are below the RMS gate, so tacet never sends them |
+
+Most of the errors are jargon whisper has never seen. It writes "cube
+control" for kubectl, "Maine" for main, "launch deep list" for launchd plist,
+"tacit" for tacet, and "post-gaz" for Postgres. That is what `--prompt` is for.
+Synthetic voices are cleaner than a real microphone in a real room, so read
+these numbers as a fixed yardstick for comparing settings, not as the accuracy
+you will get. Some misses are the voice's, not whisper's: the corpus tells
+`say` to pronounce kubectl "cube control", as many people do, and whisper
+writes exactly that.
+
+### Recording your own voice
+
+`eval/record.py` records a script line by line through `eval/recorder.swift`,
+which captures the way tacet does (AVAudioEngine's default input, a 4096-frame
+tap, AVAudioConverter to 16 kHz mono 16-bit, the same 44-byte header).
+
+```bash
+uv run python eval/record.py --script my-script.toml       # resumes where it stopped
+uv run python eval/tacet_eval.py --corpus my-script.toml --recordings --split tune
+```
+
+Press Enter and start talking, as with the hotkey, then Enter again to stop.
+Each take can be kept, redone or played back, and the recorder warns about a
+take quieter than tacet's gate, one that cut off, or a terminal without
+microphone access. Run it in a plain terminal window on the Mac whose
+microphone you mean to test; macOS asks once for access.
+
+Takes go to `~/.local/share/tacet-eval/recordings/<session>/<id>.wav`, outside
+the repository because they are your voice. A session is one microphone on one
+Mac, named after both, and is reported in place of a voice. Beside each take,
+`<id>.json` records what was read, where, and how loud it was. A take whose
+script line has changed since is refused until you `--redo` it.
+
+The script uses the corpus format with three optional fields and one table:
+
+```toml
+[[utterance]]
+id = "r12"
+split = "tune"        # or "holdout": tune on one, score the other once
+kind = "short"        # any label; the report breaks WER down by it
+text = "Edit ~/.claude/settings.json"                         # what should be pasted
+spoken = "Edit tilde slash dot claude slash settings dot json"  # shown as a reading hint
+
+[[quiet]]             # a take with no speech: any text back is a false paste
+id = "q1"
+split = "tune"
+do = "Take one slow breath in and out. No words."
+```
+
+Fix the split before anyone sees a score, and keep jargon in the holdout that
+never appears in a tune line. That way a `--prompt` built while tuning shows
+what it does to words it was never given.
+
 ## What's been tested, and what hasn't
 
 One person, two Macs, one microphone. CI runs the pytest suite on Linux and
@@ -454,7 +575,8 @@ swift/
   Packaging/build-app.sh   assembles and signs Tacet.app
   Tests/                   SwiftPM suite (48)
 config.example.toml        shape of ~/.config/tacet/config.toml
-tests/                     pytest suite — drives the installers as subprocesses
+eval/                      accuracy + latency harness and its corpus
+tests/                     pytest suite — the installers as subprocesses, the eval scoring
 .github/workflows/ci.yml   pytest + shellcheck + the signed bundle build
 docs/                      design specs
 ```

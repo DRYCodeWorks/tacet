@@ -27,3 +27,6 @@ swift/Packaging/Tacet.app/
 
 # Stray build output. The packaging script regenerates this.
 build/
+
+# Eval audio, server log and per-clip results (eval/tacet_eval.py regenerates them).
+eval/.cache/
