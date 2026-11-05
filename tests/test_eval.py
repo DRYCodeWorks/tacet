@@ -257,6 +257,35 @@ class TestRequest:
         assert te._free_port() not in te.LIVE_PORTS
 
 
+SCRIPT = """
+voices = ["A"]
+[[utterance]]
+id = "u1"
+split = "tune"
+kind = "short"
+text = "merge it"
+[[utterance]]
+id = "u2"
+split = "holdout"
+kind = "ids"
+text = "Close TKT-1618."
+[[quiet]]
+id = "q1"
+split = "tune"
+do = "Say nothing."
+"""
+
+
+def write_take(
+    folder: Path, clip_id: str, samples: list[int], note: dict | None = None
+):
+    folder.mkdir(parents=True, exist_ok=True)
+    frames = b"".join(s.to_bytes(2, "little", signed=True) for s in samples)
+    te._write_wav(folder / f"{clip_id}.wav", frames)
+    if note is not None:
+        (folder / f"{clip_id}.json").write_text(te.json.dumps(note))
+
+
 class TestSpacingAlignment:
     @pytest.mark.parametrize(
         "reference, hypothesis",
@@ -276,3 +305,99 @@ class TestSpacingAlignment:
 
     def test_gluing_two_words_still_counts(self):
         assert result("Rebase onto main.", "Rebase Ontomain.").errors == 2
+
+
+class TestSplitsAndQuiet:
+    def corpus(self, tmp_path):
+        path = tmp_path / "script.toml"
+        path.write_text(SCRIPT)
+        return te.load_corpus(path)
+
+    def test_split_kind_and_quiet_are_read(self, tmp_path):
+        corpus = self.corpus(tmp_path)
+        assert [(u.id, u.split, u.kind) for u in corpus.utterances] == [
+            ("u1", "tune", "short"),
+            ("u2", "holdout", "ids"),
+        ]
+        assert corpus.quiet == [te.Quiet("q1", "Say nothing.", "tune")]
+
+    def test_select_split_keeps_one_side(self, tmp_path):
+        tune = te.select_split(self.corpus(tmp_path), "tune")
+        assert [u.id for u in tune.utterances] == ["u1"]
+        assert [q.id for q in tune.quiet] == ["q1"]
+
+    def test_a_split_nobody_marked_is_an_error(self, tmp_path):
+        path = tmp_path / "c.toml"
+        path.write_text('[[utterance]]\nid = "u"\ntext = "hi"\n')
+        with pytest.raises(te.EvalError, match="no utterances"):
+            te.select_split(te.load_corpus(path), "holdout")
+
+    def test_unknown_split_is_refused(self, tmp_path):
+        path = tmp_path / "c.toml"
+        path.write_text('[[utterance]]\nid = "u"\ntext = "hi"\nsplit = "dev"\n')
+        with pytest.raises(te.EvalError, match="dev"):
+            te.load_corpus(path)
+
+
+class TestRecordings:
+    def setup_corpus(self, tmp_path):
+        path = tmp_path / "script.toml"
+        path.write_text(SCRIPT)
+        return te.load_corpus(path), tmp_path / "recordings"
+
+    def record_all(self, root: Path, session: str):
+        write_take(root / session, "u1", [900, -900] * 800, {"script_text": "merge it"})
+        write_take(
+            root / session, "u2", [900, -900] * 800, {"script_text": "Close TKT-1618."}
+        )
+        write_take(root / session, "q1", [3, -3] * 800, {"script_text": "Say nothing."})
+
+    def test_every_take_becomes_a_clip_per_session(self, tmp_path):
+        corpus, root = self.setup_corpus(tmp_path)
+        self.record_all(root, "studio-mic")
+        clips = te.load_recordings(corpus, root, ["studio-mic"])
+        assert [(c.id, c.voice, c.is_silence, c.kind) for c in clips] == [
+            ("u1", "studio-mic", False, "short"),
+            ("u2", "studio-mic", False, "ids"),
+            ("q1", "studio-mic", True, None),
+        ]
+
+    def test_missing_takes_stop_the_run(self, tmp_path):
+        corpus, root = self.setup_corpus(tmp_path)
+        write_take(root / "s", "u1", [900] * 1600)
+        with pytest.raises(te.EvalError, match="s/u2: not recorded"):
+            te.load_recordings(corpus, root, ["s"])
+
+    def test_a_take_recorded_for_other_text_is_stale(self, tmp_path):
+        corpus, root = self.setup_corpus(tmp_path)
+        self.record_all(root, "s")
+        write_take(root / "s", "u1", [900] * 1600, {"script_text": "merge that"})
+        with pytest.raises(te.EvalError, match="different text"):
+            te.load_recordings(corpus, root, ["s"])
+
+    def test_sessions_are_discovered_or_checked(self, tmp_path):
+        _, root = self.setup_corpus(tmp_path)
+        self.record_all(root, "laptop")
+        self.record_all(root, "studio")
+        assert te.recorded_sessions(root, None) == ["laptop", "studio"]
+        with pytest.raises(te.EvalError, match="no takes for desk"):
+            te.recorded_sessions(root, ["desk"])
+
+    def test_report_scores_sessions_kinds_and_quiet_takes(self, tmp_path):
+        corpus, root = self.setup_corpus(tmp_path)
+        self.record_all(root, "s")
+        clips = te.load_recordings(corpus, root, ["s"])
+        hyps = {"u1": "merge it", "u2": "Close TKT 1618.", "q1": "you"}
+        results = [te.ClipResult(c, hyps[c.id], 100.0, 160.0) for c in clips]
+        settings = te.Settings(
+            "ws", "", None, [], ["s"], "script.toml", "tune", str(root)
+        )
+        report = te.build_report(Path("m.bin"), settings, results)
+        assert report["per_voice"]["s"]["errors"] == 0
+        assert set(report["per_kind"]) == {"short", "ids"}
+        assert report["silence"] == {
+            "clips": 1,
+            "false_text": 1,
+            "false_text_past_gate": 1,
+        }
+        assert report["settings"]["split"] == "tune"

@@ -374,6 +374,14 @@ no evidence anywhere.
 `eval/tacet_eval.py` measures the transcription leg on its own: how accurate
 and how fast whisper-server is with tacet's model and flags.
 
+It has two kinds of input. The shipped corpus is synthetic: 44 sentences
+spoken by macOS `say`. It is a smoke test, good for "did this flag break
+something" and for server latency. It is too small and too clean to settle an
+accuracy question: one word moves a voice's WER by about a quarter of a point,
+and a text-to-speech voice has no microphone, no room and no hesitation. For
+accuracy, record your own voice ([below](#recording-your-own-voice)) and score
+that.
+
 ```bash
 uv run python eval/tacet_eval.py            # human-readable, worst clips listed
 uv run python eval/tacet_eval.py --json     # one JSON object on stdout
@@ -435,7 +443,52 @@ control" for kubectl, "Maine" for main, "launch deep list" for launchd plist,
 "tacit" for tacet, and "post-gaz" for Postgres. That is what `--prompt` is for.
 Synthetic voices are cleaner than a real microphone in a real room, so read
 these numbers as a fixed yardstick for comparing settings, not as the accuracy
-you will get.
+you will get. Some misses are the voice's, not whisper's: the corpus tells
+`say` to pronounce kubectl "cube control", as many people do, and whisper
+writes exactly that.
+
+### Recording your own voice
+
+`eval/record.py` records a script line by line through `eval/recorder.swift`,
+which captures the way tacet does (AVAudioEngine's default input, a 4096-frame
+tap, AVAudioConverter to 16 kHz mono 16-bit, the same 44-byte header).
+
+```bash
+uv run python eval/record.py --script my-script.toml       # resumes where it stopped
+uv run python eval/tacet_eval.py --corpus my-script.toml --recordings --split tune
+```
+
+Press Enter and start talking, as with the hotkey, then Enter again to stop.
+Each take can be kept, redone or played back, and the recorder warns about a
+take quieter than tacet's gate, one that cut off, or a terminal without
+microphone access. Run it in a plain terminal window on the Mac whose
+microphone you mean to test; macOS asks once for access.
+
+Takes go to `~/.local/share/tacet-eval/recordings/<session>/<id>.wav`, outside
+the repository because they are your voice. A session is one microphone on one
+Mac, named after both, and is reported in place of a voice. Beside each take,
+`<id>.json` records what was read, where, and how loud it was. A take whose
+script line has changed since is refused until you `--redo` it.
+
+The script uses the corpus format with three optional fields and one table:
+
+```toml
+[[utterance]]
+id = "r12"
+split = "tune"        # or "holdout": tune on one, score the other once
+kind = "short"        # any label; the report breaks WER down by it
+text = "Edit ~/.claude/settings.json"                         # what should be pasted
+spoken = "Edit tilde slash dot claude slash settings dot json"  # shown as a reading hint
+
+[[quiet]]             # a take with no speech: any text back is a false paste
+id = "q1"
+split = "tune"
+do = "Take one slow breath in and out. No words."
+```
+
+Fix the split before anyone sees a score, and keep jargon in the holdout that
+never appears in a tune line. That way a `--prompt` built while tuning shows
+what it does to words it was never given.
 
 ## What's been tested, and what hasn't
 

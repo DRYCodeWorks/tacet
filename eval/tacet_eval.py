@@ -3,6 +3,7 @@
     uv run python eval/tacet_eval.py [--model PATH] [--json]
         [--prompt TEXT] [--beam-size N] [--server-arg=FLAG ...]
         [--voices A,B] [--corpus PATH] [--details PATH]
+        [--recordings [DIR]] [--split tune|holdout]
 
 Speaks every utterance in eval/corpus.toml with macOS `say` in several
 voices, converts it with `afconvert` to the 16 kHz mono 16-bit WAV tacet's
@@ -11,6 +12,11 @@ the flags install-server.sh renders, and POSTs each clip to /inference the way
 WhisperClient.swift does. It reports word error rate, request latency, and how
 many silence clips came back with text, then stops the server. The live tacet
 services (ports 8910 and 8911) are never contacted.
+
+With --recordings it sends recorded takes instead (eval/record.py makes
+them): DIR/<session>/<id>.wav for every utterance and [[quiet]] take in the
+corpus, one session per microphone and Mac, reported in place of the voices.
+--split scores only the corpus lines marked `split = "tune"` or "holdout".
 
 Standard library only. Generated audio is cached in eval/.cache/ (gitignored).
 Progress goes to stderr; with --json, stdout carries exactly one JSON object.
@@ -51,6 +57,9 @@ EVAL_DIR = Path(__file__).resolve().parent
 DEFAULT_CORPUS = EVAL_DIR / "corpus.toml"
 CACHE_DIR = EVAL_DIR / ".cache"
 DEFAULT_MODEL = Path.home() / ".local/share/whisper-cpp/ggml-large-v3-turbo.bin"
+# Recorded takes live outside git: they are someone's voice.
+RECORDINGS_DIR = Path.home() / ".local/share/tacet-eval/recordings"
+SPLITS = ("tune", "holdout")
 
 # tacet's own services. The harness refuses to run a server on either.
 LIVE_PORTS = frozenset({8910, 8911})
@@ -80,9 +89,8 @@ REQUEST_TIMEOUT_S = 60.0
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        corpus = load_corpus(args.corpus)
-        voices = args.voices or corpus.voices
-        clips = prepare_audio(corpus, voices)
+        corpus = select_split(load_corpus(args.corpus), args.split)
+        clips, voices = gather_clips(corpus, args)
         settings = run_settings(args, voices)
         with WhisperServer(settings, args.model, args.load_timeout) as server:
             results = transcribe_all(server, clips)
@@ -107,6 +115,17 @@ class Utterance:
     id: str
     text: str
     spoken: str
+    split: str | None = None
+    kind: str | None = None
+
+
+@dataclass(frozen=True)
+class Quiet:
+    """A recorded take with no speech in it: any text back is a false paste."""
+
+    id: str
+    do: str
+    split: str | None = None
 
 
 @dataclass(frozen=True)
@@ -122,20 +141,24 @@ class Corpus:
     voices: list[str]
     utterances: list[Utterance]
     silences: list[Silence]
+    quiet: list[Quiet] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
 class Clip:
-    """One WAV to send: a spoken utterance in one voice, or a silence clip."""
+    """One WAV to send: an utterance in one voice or recording session, or a
+    clip with no speech (generated silence has no voice; a quiet take does)."""
 
     id: str
     voice: str | None
     reference: str
     path: Path
+    silent: bool = False
+    kind: str | None = None
 
     @property
     def is_silence(self) -> bool:
-        return self.voice is None
+        return self.silent or self.voice is None
 
 
 @dataclass(frozen=True)
@@ -165,6 +188,8 @@ class Settings:
     server_args: list[str]
     voices: list[str]
     corpus: str
+    split: str | None = None
+    recordings: str | None = None
     flags: list[str] = field(init=False)
 
     def __post_init__(self) -> None:
@@ -185,6 +210,8 @@ class Settings:
             "request": dict(REQUEST_FIELDS),
             "voices": self.voices,
             "corpus": self.corpus,
+            "split": self.split,
+            "recordings": self.recordings,
             "host": platform.node(),
             "date": datetime.date.today().isoformat(),
         }
@@ -294,8 +321,20 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         dest="server_args",
         help="extra whisper-server flag, shell-split; repeatable",
     )
-    p.add_argument("--voices", type=_voice_list, help="comma-separated say voices")
+    p.add_argument(
+        "--voices",
+        type=_voice_list,
+        help="comma-separated say voices, or recording sessions with --recordings",
+    )
     p.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS)
+    p.add_argument(
+        "--recordings",
+        type=Path,
+        nargs="?",
+        const=RECORDINGS_DIR,
+        help=f"send recorded takes from DIR (default {RECORDINGS_DIR})",
+    )
+    p.add_argument("--split", choices=SPLITS, help="score one split of the corpus")
     p.add_argument("--whisper-server", dest="binary", default=_default_binary())
     p.add_argument("--details", type=Path, default=CACHE_DIR / "last-run.json")
     p.add_argument("--load-timeout", type=float, default=300.0)
@@ -307,21 +346,87 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
 def load_corpus(path: Path) -> Corpus:
     data = tomllib.loads(path.read_text())
     utterances = [
-        Utterance(u["id"], u["text"], u.get("spoken", u["text"]))
+        Utterance(
+            u["id"],
+            u["text"],
+            u.get("spoken", u["text"]),
+            u.get("split"),
+            u.get("kind"),
+        )
         for u in data.get("utterance", [])
     ]
     silences = [
         Silence(s["id"], s["kind"], float(s["seconds"]), s.get("dbfs"))
         for s in data.get("silence", [])
     ]
-    ids = [x.id for x in utterances + silences]
-    duplicates = sorted({i for i in ids if ids.count(i) > 1})
-    if duplicates:
-        raise EvalError(f"duplicate corpus ids: {', '.join(duplicates)}")
-    unknown = sorted({s.kind for s in silences} - set(_SILENCE_KINDS))
-    if unknown:
-        raise EvalError(f"unknown silence kinds: {', '.join(unknown)}")
-    return Corpus(list(data.get("voices", [])), utterances, silences)
+    quiet = [Quiet(q["id"], q["do"], q.get("split")) for q in data.get("quiet", [])]
+    corpus = Corpus(list(data.get("voices", [])), utterances, silences, quiet)
+    _check_corpus(corpus)
+    return corpus
+
+
+def select_split(corpus: Corpus, split: str | None) -> Corpus:
+    """Keep only the lines of one split. Generated silence has no split and is
+    kept either way; it never reaches a tuning decision on its own."""
+    if split is None:
+        return corpus
+    utterances = [u for u in corpus.utterances if u.split == split]
+    if not utterances:
+        raise EvalError(f"no utterances marked split = {split!r} in the corpus")
+    quiet = [q for q in corpus.quiet if q.split == split]
+    return Corpus(corpus.voices, utterances, corpus.silences, quiet)
+
+
+def gather_clips(
+    corpus: Corpus, args: argparse.Namespace
+) -> tuple[list[Clip], list[str]]:
+    """The clips to send and the voices (or recording sessions) they come in."""
+    if args.recordings is None:
+        voices = args.voices or corpus.voices
+        return prepare_audio(corpus, voices), voices
+    sessions = recorded_sessions(args.recordings, args.voices)
+    return load_recordings(corpus, args.recordings, sessions), sessions
+
+
+def recorded_sessions(root: Path, wanted: list[str] | None) -> list[str]:
+    """Session directories under `root` that hold takes, or the ones asked for."""
+    if not root.is_dir():
+        raise EvalError(f"no recordings directory: {root} (record with eval/record.py)")
+    found = sorted(
+        d.name for d in root.iterdir() if d.is_dir() and any(d.glob("*.wav"))
+    )
+    missing = [w for w in wanted or [] if w not in found]
+    if missing:
+        raise EvalError(
+            f"no takes for {', '.join(missing)} in {root} (found: {', '.join(found) or 'none'})"
+        )
+    if not (wanted or found):
+        raise EvalError(f"no recording sessions in {root}")
+    return list(wanted or found)
+
+
+def load_recordings(corpus: Corpus, root: Path, sessions: list[str]) -> list[Clip]:
+    """Every utterance and quiet take, once per session. A missing take, or one
+    recorded for different text, stops the run: a partial set is a different
+    yardstick."""
+    clips, problems = [], []
+    for session in sessions:
+        for item in [*corpus.utterances, *corpus.quiet]:
+            path = root / session / f"{item.id}.wav"
+            problem = _take_problem(path, script_text(item))
+            if problem:
+                problems.append(f"{session}/{item.id}: {problem}")
+            elif isinstance(item, Quiet):
+                clips.append(Clip(item.id, session, "", path, silent=True))
+            else:
+                clips.append(Clip(item.id, session, item.text, path, kind=item.kind))
+    if problems:
+        shown = "\n  ".join(problems[:20])
+        more = f"\n  ...and {len(problems) - 20} more" if len(problems) > 20 else ""
+        raise EvalError(
+            f"recorded takes need attention (eval/record.py):\n  {shown}{more}"
+        )
+    return clips
 
 
 def prepare_audio(corpus: Corpus, voices: list[str]) -> list[Clip]:
@@ -333,9 +438,16 @@ def prepare_audio(corpus: Corpus, voices: list[str]) -> list[Clip]:
     jobs = [(u, v) for v in voices for u in corpus.utterances]
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
         paths = list(pool.map(lambda job: _speech_wav(*job), jobs))
-    clips = [Clip(u.id, v, u.text, path) for (u, v), path in zip(jobs, paths)]
+    clips = [
+        Clip(u.id, v, u.text, path, kind=u.kind) for (u, v), path in zip(jobs, paths)
+    ]
     clips += [Clip(s.id, None, "", _silence_wav(s)) for s in corpus.silences]
     return clips
+
+
+def script_text(item: Utterance | Quiet) -> str:
+    """What the speaker was shown for a take: the line, or a quiet take's instruction."""
+    return item.do if isinstance(item, Quiet) else item.text
 
 
 def run_settings(args: argparse.Namespace, voices: list[str]) -> Settings:
@@ -350,6 +462,8 @@ def run_settings(args: argparse.Namespace, voices: list[str]) -> Settings:
         server_args=args.server_args,
         voices=voices,
         corpus=corpus,
+        split=args.split,
+        recordings=str(args.recordings) if args.recordings else None,
     )
 
 
@@ -377,6 +491,7 @@ def build_report(model: Path, settings: Settings, results: list[ClipResult]) -> 
     speech = [r for r in results if not r.clip.is_silence]
     silence = [r for r in results if r.clip.is_silence]
     latencies = [r.ms for r in speech]
+    kinds = sorted({r.clip.kind for r in speech if r.clip.kind})
     return {
         "model": str(model),
         "settings": settings.as_dict(),
@@ -385,6 +500,10 @@ def build_report(model: Path, settings: Settings, results: list[ClipResult]) -> 
         "per_voice": {
             voice: _voice_score([r for r in speech if r.clip.voice == voice])
             for voice in settings.voices
+        },
+        "per_kind": {
+            kind: _voice_score([r for r in speech if r.clip.kind == kind])
+            for kind in kinds
         },
         "latency_ms": {
             "p50": round(percentile(latencies, 50), 1),
@@ -410,6 +529,10 @@ def format_summary(report: dict, results: list[ClipResult], worst: int = 12) -> 
     for voice, score in report["per_voice"].items():
         lines.append(
             f"  {voice:<10} {score['wer']:.2%} ({score['errors']}/{score['words']} words)"
+        )
+    for kind, score in report["per_kind"].items():
+        lines.append(
+            f"  [{kind}]{'':<{8 - len(kind)}} {score['wer']:.2%} ({score['errors']}/{score['words']} words)"
         )
     lines.append(f"latency    p50 {lat['p50']} ms, p95 {lat['p95']} ms")
     lines.append(
@@ -601,6 +724,39 @@ _CAN_FOLLOW = {
 }
 
 _SILENCE_KINDS = ("zero", "white", "brown", "hum")
+
+
+def _check_corpus(corpus: Corpus) -> None:
+    items = [*corpus.utterances, *corpus.silences, *corpus.quiet]
+    ids = [x.id for x in items]
+    duplicates = sorted({i for i in ids if ids.count(i) > 1})
+    if duplicates:
+        raise EvalError(f"duplicate corpus ids: {', '.join(duplicates)}")
+    unknown = sorted({s.kind for s in corpus.silences} - set(_SILENCE_KINDS))
+    if unknown:
+        raise EvalError(f"unknown silence kinds: {', '.join(unknown)}")
+    splits = {x.split for x in [*corpus.utterances, *corpus.quiet]} - {None, *SPLITS}
+    if splits:
+        raise EvalError(f"unknown splits: {', '.join(sorted(splits))}")
+
+
+def _take_problem(path: Path, script_text: str) -> str | None:
+    """Why a recorded take cannot be scored, or None. The note record.py writes
+    beside each take says what was read; if the script line changed since, the
+    take no longer matches its reference."""
+    if not path.is_file():
+        return "not recorded"
+    with wave.open(str(path), "rb") as w:
+        shape = (w.getnchannels(), w.getsampwidth(), w.getframerate())
+    if shape != (1, 2, SAMPLE_RATE) or path.read_bytes()[36:40] != b"data":
+        return f"not a canonical 16 kHz mono 16-bit WAV ({shape})"
+    note = path.with_suffix(".json")
+    if (
+        note.is_file()
+        and json.loads(note.read_text()).get("script_text") != script_text
+    ):
+        return "recorded for different text; redo it"
+    return None
 
 
 def _join_runs(words: list[str], targets: set[str]) -> list[str]:
