@@ -255,3 +255,24 @@ class TestRequest:
 
     def test_free_port_is_never_a_live_tacet_port(self):
         assert te._free_port() not in te.LIVE_PORTS
+
+
+class TestSpacingAlignment:
+    @pytest.mark.parametrize(
+        "reference, hypothesis",
+        [
+            ("Bump ch-migrate.", "Bump CH migrate."),
+            ("Move TKT-1687 to Backlog.", "Move TKT 1687 to backlog."),
+            ("the standup", "the stand up"),
+            ("Try large-v3-turbo.", "Try large V3 turbo."),
+        ],
+    )
+    def test_spacing_inside_a_word_never_counts(self, reference, hypothesis):
+        assert result(reference, hypothesis).errors == 0
+
+    def test_a_wrong_word_still_counts(self):
+        # Nothing joins to "chmigrate", so it is a substitution plus an insertion.
+        assert result("Bump ch-migrate.", "Bump CH migrant.").errors == 2
+
+    def test_gluing_two_words_still_counts(self):
+        assert result("Rebase onto main.", "Rebase Ontomain.").errors == 2

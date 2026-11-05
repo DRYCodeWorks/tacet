@@ -151,7 +151,8 @@ class ClipResult:
 
     @property
     def errors(self) -> int:
-        return word_errors(self.reference_words, normalize(self.text))
+        reference = self.reference_words
+        return word_errors(reference, join_split_words(reference, normalize(self.text)))
 
 
 @dataclass(frozen=True)
@@ -474,6 +475,14 @@ def word_errors(reference: list[str], hypothesis: list[str]) -> int:
     return previous[-1]
 
 
+def join_split_words(reference: list[str], hypothesis: list[str]) -> list[str]:
+    """Whisper splitting a word never counts: "CH migrate" scores the same as
+    ch-migrate ("chmigrate"), and "TKT 1687" the same as TKT-1687. Two or three
+    adjacent hypothesis words are joined when the joined form is a reference
+    word. Gluing two words together ("Ontomain" for "onto main") still counts."""
+    return _join_runs(hypothesis, set(reference))
+
+
 def corpus_wer(results: list[ClipResult]) -> float:
     """Micro-averaged WER: total word errors over total reference words."""
     words = sum(len(r.reference_words) for r in results)
@@ -592,6 +601,21 @@ _CAN_FOLLOW = {
 }
 
 _SILENCE_KINDS = ("zero", "white", "brown", "hum")
+
+
+def _join_runs(words: list[str], targets: set[str]) -> list[str]:
+    out, i = [], 0
+    while i < len(words):
+        for n in (3, 2):
+            joined = "".join(words[i : i + n])
+            if i + n <= len(words) and joined in targets:
+                out.append(joined)
+                i += n
+                break
+        else:
+            out.append(words[i])
+            i += 1
+    return out
 
 
 def _voice_list(value: str) -> list[str]:

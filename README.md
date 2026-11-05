@@ -413,6 +413,8 @@ ever reach a user.
   same as "slash etc slash hosts", and `--dry-run` the same as "dash dash dry
   run". The eval measures recognition, not formatting.
 - Hyphenated compounds close up (`stand-up` = `standup`).
+- Whisper splitting a word never counts: "CH migrate" = `ch-migrate`, "TKT
+  1687" = `TKT-1687`. Gluing two words together ("Ontomain") still does.
 - Spelled-out numbers become digits ("twenty five" = 25), and `7:15` = `7.15` =
   "seven fifteen".
 
@@ -424,8 +426,8 @@ ggml-large-v3-turbo, production flags, empty `--prompt`):
 
 | | |
 |---|---|
-| WER | 4.32% (Samantha 3.41%, Daniel 4.38%, Karen 4.38%, Moira 5.11%) |
-| latency | p50 239 ms, p95 253 ms |
+| WER | 3.53%, 58 of 1,644 words (Samantha 3.16%, Daniel 2.68%, Karen 4.62%, Moira 3.65%) |
+| latency | p50 242 ms, p95 264 ms |
 | silence | 2 of 7 clips returned text ("you" on digital silence). Both are below the RMS gate, so tacet never sends them |
 
 Most of the errors are jargon whisper has never seen. It writes "cube
