@@ -425,6 +425,24 @@ reload_agent() {
 }
 
 # ==============================================================================
+# Claude Code skill
+# ==============================================================================
+
+# The tacet-vocab skill (#30) is how a Claude Code session adds words to the
+# vocabulary: it runs `tacet vocab`. Copied, not linked, because the clone is
+# not load-bearing. Skipped without Claude Code; re-running refreshes it.
+install_claude_skill() {
+  local claude_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+  if [[ ! -d "$claude_dir" ]]; then
+    log "Claude Code not found at ${claude_dir}; skipping the tacet-vocab skill."
+    return 0
+  fi
+  mkdir -p "$claude_dir/skills/tacet-vocab"
+  cp "$REPO_DIR/skills/tacet-vocab/SKILL.md" "$claude_dir/skills/tacet-vocab/SKILL.md"
+  log "Installed the tacet-vocab Claude Code skill: ask Claude to \"add Tacet to my vocab\"."
+}
+
+# ==============================================================================
 # Doctor
 # ==============================================================================
 
@@ -763,6 +781,8 @@ while [[ ! -f "$STATUS_JSON" ]]; do
   sleep 1
 done
 printf '\n'
+
+install_claude_skill
 
 printf '\n'
 if run_doctor; then

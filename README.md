@@ -202,12 +202,40 @@ switched ON for a binary nothing trusts.
 
 Everything is optional — the defaults are the working single-machine setup.
 Copy `config.example.toml` to `~/.config/tacet/config.toml` to change the
-bind address, the model path, the silence threshold, or the vocabulary prompt.
+bind address, the model path, the silence threshold, or where the vocabulary lives.
 
-The **vocabulary prompt** is the cheapest accuracy win available: proper nouns
-and jargon that come back mangled usually come back correct once listed in
-`whisper.prompt`. It ships empty, because one person's jargon is another
-person's noise.
+### Vocabulary
+
+Names and jargon that come back misspelled ("tacit" for *tacet*, "a lambic"
+for *Alembic*) usually come back right once they are in your **vocabulary**:
+a word list that tacet sends to whisper with every dictation. It ships empty,
+because one person's jargon is another person's noise.
+
+```bash
+tacet vocab add Tacet ClickHouse "Claude Code"
+tacet vocab list
+tacet vocab remove Tacet
+```
+
+The binary lives inside the app bundle and is not on your PATH; use
+`~/Applications/Tacet.app/Contents/MacOS/tacet` or alias it.
+
+- **It lives on the server**, in `~/.config/tacet/vocabulary.txt`, one term per
+  line. Every Mac dictating to that server shares it, and an edit (by
+  `tacet vocab` or by hand) takes effect on the next dictation.
+- **From Claude Code:** `install-client.sh` installs a `tacet-vocab` skill, so
+  you can say *"add Tacet and ClickHouse to my vocab"* in a session, or *"it
+  wrote tacit, I meant Tacet"*.
+- **Terms stay word-like:** letters, digits, spaces and `- _ . + # / @ :`, at
+  most three words. Anything else is refused, and a hand-edited line that
+  breaks the rules is ignored and reported by `tacet vocab list`.
+- **Whisper reads a limited prompt**, about 223 tokens. tacet fills it with the
+  newest terms first, up to `vocabulary.max_prompt_tokens` (default 150), and
+  `tacet vocab list` marks any term that didn't fit.
+- **Upgrading:** an existing `whisper.prompt` is moved into the vocabulary file
+  the first time the server starts, and ignored after that.
+
+Design: [`docs/superpowers/specs/2026-11-06-vocabulary-design.md`](docs/superpowers/specs/2026-11-06-vocabulary-design.md).
 
 ### `./install-client.sh --doctor`
 

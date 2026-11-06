@@ -524,3 +524,33 @@ class TestAppTransportSecurity:
         cc = (REPO / "swift" / "Sources" / "TacetCore" / "ClientConfig.swift").read_text()
         assert "validateTransport" in cc
         assert "allowPlaintext" in cc
+
+
+# ---------------------------------------------------------------------------
+# The tacet-vocab Claude Code skill (#30)
+# ---------------------------------------------------------------------------
+
+
+class TestClaudeSkill:
+    def test_installs_into_the_claude_config_dir(self, tmp_path):
+        claude = tmp_path / "claude"
+        claude.mkdir()
+        status, out = run_sourced("install_claude_skill",
+                                  {"CLAUDE_CONFIG_DIR": str(claude)})
+        assert status == 0, out
+        installed = claude / "skills" / "tacet-vocab" / "SKILL.md"
+        assert installed.read_text() == (REPO / "skills/tacet-vocab/SKILL.md").read_text()
+
+    def test_skips_quietly_without_claude_code(self, tmp_path):
+        missing = tmp_path / "no-claude"
+        status, out = run_sourced("install_claude_skill",
+                                  {"CLAUDE_CONFIG_DIR": str(missing)})
+        assert status == 0, out
+        assert "skipping" in out
+        assert not missing.exists()
+
+    def test_the_skill_never_names_a_maintainer_path(self):
+        # The repo is public and the skill is copied onto other people's Macs.
+        text = (REPO / "skills/tacet-vocab/SKILL.md").read_text()
+        assert "/Users/" not in text
+        assert "Freelance" not in text
