@@ -2,12 +2,12 @@ import XCTest
 @testable import TacetCore
 
 final class VocabularyTests: XCTestCase {
-    /// The maintainer's pre-#30 prompt, verbatim: migration must carry every
-    /// term across and reproduce the same prompt text.
-    static let legacyPrompt = "Technical dictation. Vocabulary: ClickHouse, tmux, Graphite, "
-        + "Terraform, Kubernetes, Alembic, MergeTree, Tailscale, ReplacingMergeTree, Postgres, "
-        + "Kafka, Claude Code, DRYCodeWorks, repo, PR, stack, migration, schema, query, cluster, "
-        + "shard, partition, CLI, API, JSON, YAML, Docker, launchd."
+    /// A pre-#30 `whisper.prompt` in the documented shape, about as long as a
+    /// real one: migration must carry every term across, fit the default
+    /// budget, and reproduce the same prompt text.
+    static let legacyPrompt = "Technical dictation. Vocabulary: Postgres, Kubernetes, Terraform, "
+        + "tmux, Redis, Nginx, GraphQL, gRPC, OAuth, Webpack, TypeScript, Rust, Go, Python, repo, PR, "
+        + "schema, migration, cluster, shard, CLI, API, JSON, YAML, Docker, Claude Code, Homebrew, launchd."
 
     func testParseKeepsCommentsAndRoundTrips() {
         let text = "# mine\nTacet\n\nClaude Code\n"
@@ -46,7 +46,7 @@ final class VocabularyTests: XCTestCase {
     func testLegacyPromptMigratesCompletelyAndFits() {
         let v = Vocabulary.migrated(fromPrompt: Self.legacyPrompt)
         XCTAssertEqual(v.terms.count, 28) // "Claude Code" is one term
-        XCTAssertEqual(v.terms.first, "ClickHouse")
+        XCTAssertEqual(v.terms.first, "Postgres")
         XCTAssertEqual(v.terms.last, "launchd")
         XCTAssertTrue(v.ignored.isEmpty)
         let p = v.prompt(preamble: "Technical dictation.", maxTokens: 150)

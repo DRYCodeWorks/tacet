@@ -19,6 +19,7 @@ final class ServerTests: XCTestCase {
         super.setUp()
         server = TacetServer(config: TacetConfig(), key: "testkey",
                             whisper: StubWhisper(.success("hello world")),
+                            vocabulary: TestSupport.scratchVocabulary(),
                             logger: Logger(label: "test"))
     }
 
@@ -71,6 +72,7 @@ final class ServerTests: XCTestCase {
     func testTranscriptIsSanitisedAndCollapsed() {
         server = TacetServer(config: TacetConfig(), key: "testkey",
                             whisper: StubWhisper(.success("  hello\n  world  ")),
+                            vocabulary: TestSupport.scratchVocabulary(),
                             logger: Logger(label: "test"))
         let resp = dictate()
         XCTAssertEqual(resp.status, 200)
@@ -80,6 +82,7 @@ final class ServerTests: XCTestCase {
     func testNoAlphanumericReturnsEmpty() {
         server = TacetServer(config: TacetConfig(), key: "testkey",
                             whisper: StubWhisper(.success("!!!" )),
+                            vocabulary: TestSupport.scratchVocabulary(),
                             logger: Logger(label: "test"))
         let resp = dictate()
         XCTAssertEqual(resp.status, 200)
@@ -89,6 +92,7 @@ final class ServerTests: XCTestCase {
     func testWhisperUnavailableIs503() {
         server = TacetServer(config: TacetConfig(), key: "testkey",
                             whisper: StubWhisper(.failure(WhisperError.unavailable("boom"))),
+                            vocabulary: TestSupport.scratchVocabulary(),
                             logger: Logger(label: "test"))
         let resp = dictate()
         XCTAssertEqual(resp.status, 503)

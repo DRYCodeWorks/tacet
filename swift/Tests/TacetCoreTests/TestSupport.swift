@@ -5,6 +5,15 @@ import Network
 
 /// Shared helpers for integration and e2e tests.
 enum TestSupport {
+    /// A vocabulary in a fresh temp directory, so a test server never reads
+    /// the developer's real ~/.config/tacet/vocabulary.txt (#20).
+    static func scratchVocabulary() -> VocabularyStore {
+        VocabularyStore(url: FileManager.default.temporaryDirectory
+                            .appendingPathComponent(UUID().uuidString)
+                            .appendingPathComponent("vocabulary.txt"),
+                        words: WordList { _ in false })
+    }
+
     /// A currently-free high port. There is a tiny race between releasing the
     /// probe socket and the test binding it, which is acceptable in tests.
     static func freePort() -> UInt16 {

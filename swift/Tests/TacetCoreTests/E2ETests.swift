@@ -37,6 +37,7 @@ final class E2ETests: XCTestCase {
             config: TacetConfig(tacetPort: Int(tacetPort), whisperPort: Int(whisper.port)),
             key: "e2ekey",
             whisper: WhisperClient(baseURL: "http://127.0.0.1:\(whisper.port)"),
+            vocabulary: TestSupport.scratchVocabulary(),
             logger: Logger(label: "test"))
         let listener = try server.start(port: tacetPort)
         defer { listener.cancel() }
@@ -67,6 +68,7 @@ final class E2ETests: XCTestCase {
             config: TacetConfig(tacetPort: Int(tacetPort), whisperPort: Int(whisper.port)),
             key: "e2ekey",
             whisper: WhisperClient(baseURL: "http://127.0.0.1:\(whisper.port)"),
+            vocabulary: TestSupport.scratchVocabulary(),
             logger: Logger(label: "test"))
         let listener = try server.start(port: tacetPort)
         defer { listener.cancel() }

@@ -25,6 +25,7 @@ final class IntegrationTests: XCTestCase {
         let server = TacetServer(config: TacetConfig(tacetPort: Int(port)),
                                 key: key,
                                 whisper: whisper ?? StubWhisper(.success("hello world")),
+                                vocabulary: TestSupport.scratchVocabulary(),
                                 logger: Logger(label: "test"))
         self.server = server
         return try server.start(port: port)
