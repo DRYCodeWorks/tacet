@@ -10,7 +10,9 @@ import Foundation
 /// hand-edited file is held to the same rules.
 extension TacetServer {
     struct VocabularyEdit: Decodable {
+        struct Fix: Decodable { let from: String; let to: String }
         let add: [String]?
+        let fix: [Fix]?
         let remove: [String]?
     }
 
@@ -23,9 +25,11 @@ extension TacetServer {
 
     struct VocabularyListing: Encodable {
         struct Term: Encodable { let text: String; let inPrompt: Bool }
+        struct Correction: Encodable { let from: String; let to: String }
         struct Ignored: Encodable { let line: String; let reason: String }
         struct Budget: Encodable { let estimatedTokens: Int; let maxTokens: Int }
         let terms: [Term]
+        let corrections: [Correction]
         let ignored: [Ignored]
         let prompt: Budget
         var results: [EditResult]?
@@ -44,15 +48,15 @@ extension TacetServer {
             return jsonError(415, "expected Content-Type: application/json")
         }
         guard let edit = try? JSONDecoder().decode(VocabularyEdit.self, from: request.body) else {
-            return jsonError(400, "expected a JSON object with \"add\" and/or \"remove\" lists")
+            return jsonError(400, "expected a JSON object with \"add\", \"fix\" and/or \"remove\" lists")
         }
-        let count = (edit.add?.count ?? 0) + (edit.remove?.count ?? 0)
+        let count = (edit.add?.count ?? 0) + (edit.fix?.count ?? 0) + (edit.remove?.count ?? 0)
         guard count > 0, count <= Self.maxEditsPerRequest else {
             return jsonError(400, "send between 1 and \(Self.maxEditsPerRequest) entries")
         }
         do {
             let (results, updated) = try vocabulary.update { v -> ([EditResult], Vocabulary) in
-                let results = Self.apply(edit, to: &v)
+                let results = Self.apply(edit, to: &v, words: vocabulary.words)
                 return (results, v)
             }
             logger.info("vocabulary edited: \(results.map { "\($0.action) \($0.status)" }.joined(separator: ", "))")
@@ -65,16 +69,12 @@ extension TacetServer {
         }
     }
 
-    static func apply(_ edit: VocabularyEdit, to v: inout Vocabulary) -> [EditResult] {
-        var results: [EditResult] = []
-        for term in edit.add ?? [] {
-            switch v.add(term) {
-            case .added: results.append(EditResult(action: "add", entry: term, status: "added", reason: nil))
-            case .alreadyPresent:
-                results.append(EditResult(action: "add", entry: term, status: "already present", reason: nil))
-            case .refused(let why):
-                results.append(EditResult(action: "add", entry: term, status: "refused", reason: why))
-            }
+    static func apply(_ edit: VocabularyEdit, to v: inout Vocabulary, words: WordList) -> [EditResult] {
+        var results = (edit.add ?? []).map { term in
+            result("add", term, v.add(term))
+        }
+        for fix in edit.fix ?? [] {
+            results.append(result("fix", "\(fix.from) -> \(fix.to)", v.fix(from: fix.from, to: fix.to, words: words)))
         }
         for term in edit.remove ?? [] {
             let status = v.remove(term) ? "removed" : "not found"
@@ -83,11 +83,22 @@ extension TacetServer {
         return results
     }
 
+    private static func result(_ action: String, _ entry: String, _ outcome: Vocabulary.AddResult) -> EditResult {
+        switch outcome {
+        case .added: return EditResult(action: action, entry: entry, status: "added", reason: nil)
+        case .alreadyPresent: return EditResult(action: action, entry: entry, status: "already present", reason: nil)
+        case .refused(let why): return EditResult(action: action, entry: entry, status: "refused", reason: why)
+        case .addedAsTerm(let why):
+            return EditResult(action: action, entry: entry, status: "added as a term", reason: why)
+        }
+    }
+
     func listing(_ v: Vocabulary) -> VocabularyListing {
         let prompt = v.prompt(preamble: config.vocabularyPreamble, maxTokens: config.maxPromptTokens)
         let included = Set(prompt.included)
         return VocabularyListing(
-            terms: v.terms.map { .init(text: $0, inPrompt: included.contains($0)) },
+            terms: v.promptTerms.map { .init(text: $0, inPrompt: included.contains($0)) },
+            corrections: v.corrections.map { .init(from: $0.from, to: $0.to) },
             ignored: v.ignored.map { .init(line: $0.line, reason: $0.reason) },
             prompt: .init(estimatedTokens: prompt.estimatedTokens, maxTokens: config.maxPromptTokens),
             results: nil)

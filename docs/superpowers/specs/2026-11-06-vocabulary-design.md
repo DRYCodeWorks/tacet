@@ -2,7 +2,7 @@
 
 Issue: [#30](https://github.com/DRYCodeWorks/tacet/issues/30). Supersedes #23 (phrase repair) and #24 (empty default prompt).
 Date: 2026-11-06
-Revision: 3. D1–D4 are agreed (see "Decided"). Terms are built; corrections (D2's second kind, D3) are not yet.
+Revision: 4. D1–D4 are agreed (see "Decided") and built: terms, corrections and their guards.
 
 ## Why
 
@@ -110,7 +110,8 @@ limits. Neither the CLI nor the skill is the boundary.
    - Replacements are limited to letters, digits, spaces and `- _ . + # / @ :`, with
      no shell metacharacters such as `; | & $ ~` or backticks.
    - They can be at most 64 characters and at most 3 words.
-   - A correction's replacement also becomes a term, so it is visible in `list`.
+   - A correction's replacement is also a prompt term (an implicit one, not a separate
+     line), so it is visible in `list`.
 4. **Real words are refused as single-word triggers.** If the trigger is one word found
    in `/usr/share/dict/words`, the correction is refused. That file ships with macOS
    (web2, 235k words) and needs no AppKit inside a launchd job. The replacement is

@@ -14,10 +14,11 @@ final class ServerVocabularyTests: XCTestCase {
         makeServer(legacyPrompt: "")
     }
 
-    private func makeServer(legacyPrompt: String) {
-        whisper = StubWhisper(.success("hello world"))
+    private func makeServer(legacyPrompt: String, transcript: String = "hello world") {
+        whisper = StubWhisper(.success(transcript))
         server = TacetServer(config: TacetConfig(), key: "testkey", whisper: whisper,
-                             vocabulary: VocabularyStore(url: fileURL, legacyPrompt: legacyPrompt),
+                             vocabulary: VocabularyStore(url: fileURL, legacyPrompt: legacyPrompt,
+                                                         words: VocabularyTests.english),
                              logger: Logger(label: "test"))
     }
 
@@ -92,5 +93,26 @@ final class ServerVocabularyTests: XCTestCase {
         XCTAssertEqual(terms.first?["text"] as? String, "Tacet")
         XCTAssertEqual(terms.first?["in_prompt"] as? Bool, true)
         XCTAssertNotNil((body["prompt"] as? [String: Any])?["max_tokens"])
+    }
+
+    func testFixReportsEachOutcome() {
+        let resp = edit("""
+            {"fix":[{"from":"a lambic","to":"Alembic"},{"from":"tacit","to":"Tacet"},
+                    {"from":"ls","to":"rm -rf /"}]}
+            """)
+        XCTAssertEqual(resp.status, 200)
+        let results = json(resp)["results"] as? [[String: Any]] ?? []
+        XCTAssertEqual(results.map { $0["status"] as? String }, ["added", "added as a term", "refused"])
+        let corrections = json(resp)["corrections"] as? [[String: Any]] ?? []
+        XCTAssertEqual(corrections.map { $0["to"] as? String }, ["Alembic"])
+    }
+
+    func testDictationAppliesCorrectionsBeforeSanitising() {
+        makeServer(legacyPrompt: "", transcript: "use replacing merge tree.Then\nship")
+        _ = edit("{\"fix\":[{\"from\":\"replacing merge tree\",\"to\":\"ReplacingMergeTree\"}]}")
+        let resp = dictate()
+        XCTAssertEqual(String(decoding: resp.body, as: UTF8.self),
+                       "{\"text\":\"use ReplacingMergeTree. Then ship\"}")
+        XCTAssertTrue(whisper.prompts.first?.contains("ReplacingMergeTree") ?? false)
     }
 }

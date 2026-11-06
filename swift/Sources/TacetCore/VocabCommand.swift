@@ -11,10 +11,17 @@ public enum VocabCommand {
     public static let usage = """
     usage: tacet vocab [list]
            tacet vocab add TERM...
-           tacet vocab remove TERM...
+           tacet vocab fix WRONG RIGHT
+           tacet vocab remove ENTRY...
 
     Terms are words whisper should prefer, such as names and jargon it gets
     wrong. Quote a term with spaces ("Claude Code"); commas separate several.
+
+    `fix` rewrites what whisper wrote into what you meant, for words a term
+    alone doesn't fix: tacet vocab fix "cuber netties" Kubernetes. RIGHT must be
+    a respelling of WRONG, and a single English word can't be WRONG; in that
+    case RIGHT is added as a term instead.
+
     The list lives on the transcription server and changes take effect on the
     next dictation.
 
@@ -23,6 +30,7 @@ public enum VocabCommand {
     enum Action: Equatable {
         case list
         case add([String])
+        case fix(String, String)
         case remove([String])
         case help
     }
@@ -53,6 +61,10 @@ public enum VocabCommand {
 
     static func parse(_ args: [String]) -> Action? {
         guard let verb = args.first else { return .list }
+        if verb == "fix" {
+            let pair = args.dropFirst().map { $0.trimmingCharacters(in: .whitespaces) }
+            return pair.count == 2 && !pair.contains("") ? .fix(pair[0], pair[1]) : nil
+        }
         let terms = args.dropFirst()
             .flatMap { $0.split(separator: ",") }
             .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -73,9 +85,12 @@ public enum VocabCommand {
         }
         let inPrompt = listing.terms.filter(\.inPrompt).count
         lines.append("Vocabulary: \(listing.terms.count) terms, \(inPrompt) in the prompt "
-            + "(~\(listing.prompt.estimatedTokens) of \(listing.prompt.maxTokens) tokens).")
+            + "(~\(listing.prompt.estimatedTokens) of \(listing.prompt.maxTokens) tokens), "
+            + "\(listing.corrections.count) corrections.")
         if action == .list {
             lines += listing.terms.map { "  \($0.text)" + ($0.inPrompt ? "" : "  (not in the prompt: over budget)") }
+            if !listing.corrections.isEmpty { lines.append("Corrections:") }
+            lines += listing.corrections.map { "  \($0.from) -> \($0.to)" }
         }
         if !listing.ignored.isEmpty {
             lines.append("\(listing.ignored.count) line(s) in the vocabulary file are ignored:")
@@ -90,10 +105,12 @@ public enum VocabCommand {
 struct VocabularyClient {
     struct Listing: Decodable {
         struct Term: Decodable { let text: String; let inPrompt: Bool }
+        struct Correction: Decodable { let from: String; let to: String }
         struct Ignored: Decodable { let line: String; let reason: String }
         struct Budget: Decodable { let estimatedTokens: Int; let maxTokens: Int }
         struct Result: Decodable { let action: String; let entry: String; let status: String; let reason: String? }
         let terms: [Term]
+        let corrections: [Correction]
         let ignored: [Ignored]
         let prompt: Budget
         let results: [Result]?
@@ -121,6 +138,7 @@ struct VocabularyClient {
         request.setValue(key, forHTTPHeaderField: "X-Tacet-Key")
         switch action {
         case .add(let terms): try setBody(&request, ["add": terms])
+        case .fix(let from, let to): try setBody(&request, ["fix": [["from": from, "to": to]]])
         case .remove(let terms): try setBody(&request, ["remove": terms])
         case .list, .help: request.httpMethod = "GET"
         }
@@ -131,7 +149,7 @@ struct VocabularyClient {
         return try decoder.decode(Listing.self, from: data)
     }
 
-    private func setBody(_ request: inout URLRequest, _ body: [String: [String]]) throws {
+    private func setBody<Body: Encodable>(_ request: inout URLRequest, _ body: Body) throws {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)

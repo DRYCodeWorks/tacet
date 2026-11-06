@@ -11,13 +11,16 @@ public final class VocabularyStore {
     /// The pre-#30 `whisper.prompt`. Used only while no vocabulary file exists,
     /// so an upgraded server keeps its biasing before migration has run.
     let legacyPrompt: String
+    /// English words, for refusing corrections triggered by one.
+    public let words: WordList
     private let lock = NSLock()
     private var cached = Vocabulary()
     private var cachedModified: Date?
 
-    public init(url: URL, legacyPrompt: String = "") {
+    public init(url: URL, legacyPrompt: String = "", words: WordList = .system) {
         self.url = url
         self.legacyPrompt = legacyPrompt
+        self.words = words
     }
 
     public func current() -> Vocabulary {
@@ -64,7 +67,7 @@ public final class VocabularyStore {
             return legacyPrompt.isEmpty ? Vocabulary() : Vocabulary.migrated(fromPrompt: legacyPrompt)
         }
         if modified != cachedModified, let text = try? String(contentsOf: url, encoding: .utf8) {
-            cached = Vocabulary.parse(text)
+            cached = Vocabulary.parse(text, words: words)
             cachedModified = modified
         }
         return cached

@@ -213,6 +213,7 @@ because one person's jargon is another person's noise.
 
 ```bash
 tacet vocab add Tacet ClickHouse "Claude Code"
+tacet vocab fix "replacing merge tree" ReplacingMergeTree
 tacet vocab list
 tacet vocab remove Tacet
 ```
@@ -220,12 +221,18 @@ tacet vocab remove Tacet
 The binary lives inside the app bundle and is not on your PATH; use
 `~/Applications/Tacet.app/Contents/MacOS/tacet` or alias it.
 
-- **It lives on the server**, in `~/.config/tacet/vocabulary.txt`, one term per
-  line. Every Mac dictating to that server shares it, and an edit (by
+- **Two kinds of entry.** A *term* nudges whisper toward a spelling. A
+  *correction* (`fix WRONG RIGHT`) rewrites what whisper wrote, for compounds a
+  term can't hold together. A correction must be a respelling of what was said
+  (`cuber netties -> Kubernetes`, not `ls -> rm -rf /`), and a single English
+  word can't be corrected (`tacit` would also rewrite "tacit agreement"), so
+  `fix tacit Tacet` adds `Tacet` as a term instead.
+- **It lives on the server**, in `~/.config/tacet/vocabulary.txt`, one entry per
+  line: a term, or `wrong -> Right`. Every Mac dictating to that server shares it, and an edit (by
   `tacet vocab` or by hand) takes effect on the next dictation.
 - **From Claude Code:** `install-client.sh` installs a `tacet-vocab` skill, so
   you can say *"add Tacet and ClickHouse to my vocab"* in a session, or *"it
-  wrote tacit, I meant Tacet"*.
+  wrote replacing merge tree, I meant ReplacingMergeTree"*.
 - **Terms stay word-like:** letters, digits, spaces and `- _ . + # / @ :`, at
   most three words. Anything else is refused, and a hand-edited line that
   breaks the rules is ignored and reported by `tacet vocab list`.

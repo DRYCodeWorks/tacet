@@ -315,8 +315,10 @@ public final class TacetServer {
             return jsonText("")
         }
 
-        let prompt = vocabulary.current().prompt(preamble: config.vocabularyPreamble,
-                                                 maxTokens: config.maxPromptTokens)
+        // One snapshot for both the prompt and the corrections, so a concurrent
+        // edit can't pair one version's prompt with another's rules.
+        let vocab = vocabulary.current()
+        let prompt = vocab.prompt(preamble: config.vocabularyPreamble, maxTokens: config.maxPromptTokens)
         let raw = sync {
             try await self.whisper.transcribe(wav: request.body, prompt: prompt.text)
         }
@@ -328,7 +330,9 @@ public final class TacetServer {
             return jsonError(503, "\(error)")
         }
 
-        let sanitised = Sanitize.sanitize(text)
+        // Corrections run BEFORE Sanitize, so control-character and newline
+        // stripping is always the last thing to touch what gets pasted (#30).
+        let sanitised = Sanitize.sanitize(vocab.correct(text))
         if !hasAlphanumeric(sanitised) {
             logger.info("transcript has no alphanumerics; returning empty transcript")
             return jsonText("")

@@ -89,11 +89,84 @@ final class VocabularyTests: XCTestCase {
         XCTAssertEqual(store.current().terms, ["Tacet", "YTS"])
     }
 
+    /// A stand-in for /usr/share/dict/words, so the tests don't depend on it.
+    static let english = WordList { ["tacit", "remove", "sequel"].contains($0.lowercased()) }
+
+    func testCorrectionsMustRespellWhatWasSaid() {
+        // The guard on corrections (#30, D3): a rule may respell a mishearing,
+        // never turn something said into something else.
+        let accepted = [("replacing merge tree", "ReplacingMergeTree"), ("click house", "ClickHouse"),
+                        ("a lambic", "Alembic"), ("cloud code", "Claude Code"),
+                        ("cuber netties", "Kubernetes"), ("tea mux", "tmux")]
+        for (from, to) in accepted {
+            var v = Vocabulary()
+            XCTAssertEqual(v.fix(from: from, to: to, words: Self.english), .added, "\(from) -> \(to)")
+        }
+        for (from, to) in [("ls", "rm -rf /"), ("of the", "rm -rf"), ("post gress", "Postgres; ls")] {
+            var v = Vocabulary()
+            if case .refused = v.fix(from: from, to: to, words: Self.english) {} else {
+                XCTFail("\(from) -> \(to) must be refused")
+            }
+            XCTAssertTrue(v.corrections.isEmpty)
+        }
+    }
+
+    func testAnEnglishWordTriggerBecomesATerm() {
+        // "tacit -> Tacet" would also rewrite "tacit agreement".
+        var v = Vocabulary()
+        guard case .addedAsTerm(let why) = v.fix(from: "tacit", to: "Tacet", words: Self.english) else {
+            return XCTFail("expected the replacement to be added as a term")
+        }
+        XCTAssertTrue(why.contains("English word"), why)
+        XCTAssertEqual(v.terms, ["Tacet"])
+        XCTAssertTrue(v.corrections.isEmpty)
+    }
+
+    func testCorrectRewritesWholeWordsLongestFirstInOnePass() {
+        let v = Vocabulary.parse("""
+            merge tree -> MergeTree
+            replacing merge tree -> ReplacingMergeTree
+            post gress -> Postgres
+            postgres -> PostgreSQL
+            """, words: Self.english)
+        XCTAssertTrue(v.ignored.isEmpty, "\(v.ignored)")
+        XCTAssertEqual(
+            v.correct("Use Replacing  merge\ntree, not merge tree. Post gress; mergetrees stay."),
+            "Use ReplacingMergeTree, not MergeTree. Postgres; mergetrees stay.")
+    }
+
+    func testHandEditedCorrectionsAreValidatedOnLoad() {
+        let v = Vocabulary.parse("a lambic -> Alembic\nls -> rm -rf /\ntacit -> Tacet\n", words: Self.english)
+        XCTAssertEqual(v.corrections.map(\.to), ["Alembic"])
+        XCTAssertEqual(v.ignored.count, 2)
+        XCTAssertTrue(v.ignored[0].reason.contains("not a respelling"), v.ignored[0].reason)
+        XCTAssertTrue(v.ignored[1].reason.contains("English word"), v.ignored[1].reason)
+        XCTAssertEqual(v.serialize(), "a lambic -> Alembic\nls -> rm -rf /\ntacit -> Tacet\n")
+    }
+
+    func testPromptPrefersTermsNoCorrectionCovers() {
+        // Alembic is covered after decoding; Tacet has only the prompt.
+        let v = Vocabulary.parse("Tacet\na lambic -> Alembic\n", words: Self.english)
+        XCTAssertEqual(v.promptTerms, ["Tacet", "Alembic"])
+        let one = v.prompt(preamble: "", maxTokens: Vocabulary.estimateTokens("Vocabulary: Tacet."))
+        XCTAssertEqual(one.included, ["Tacet"])
+    }
+
+    func testRemoveDropsCorrectionsFromEitherSide() {
+        var v = Vocabulary.parse("a lambic -> Alembic\ncuber netties -> Kubernetes\n", words: Self.english)
+        XCTAssertTrue(v.remove("alembic"))
+        XCTAssertTrue(v.remove("Cuber Netties"))
+        XCTAssertTrue(v.corrections.isEmpty)
+    }
+
     func testVocabCommandParsesVerbsAndCommaLists() {
         XCTAssertEqual(VocabCommand.parse([]), .list)
         XCTAssertEqual(VocabCommand.parse(["add", "ClickHouse, Tacet", "Claude Code"]),
                        .add(["ClickHouse", "Tacet", "Claude Code"]))
         XCTAssertEqual(VocabCommand.parse(["rm", "Tacet"]), .remove(["Tacet"]))
+        XCTAssertEqual(VocabCommand.parse(["fix", "cuber netties", "Kubernetes"]),
+                       .fix("cuber netties", "Kubernetes"))
+        XCTAssertNil(VocabCommand.parse(["fix", "tacit"]))
         XCTAssertNil(VocabCommand.parse(["add"]))
         XCTAssertNil(VocabCommand.parse(["frobnicate"]))
     }
