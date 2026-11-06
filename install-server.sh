@@ -190,6 +190,37 @@ check_key() {
   return 0
 }
 
+# The vocabulary (#30): the word list `tacet serve` sends to whisper with every
+# request. whisper.prompt is read only to migrate it into this file, once.
+vocabulary_file() {
+  local path
+  path="$(config_value vocabulary path "$CONFIG_DIR/vocabulary.txt")"
+  printf '%s' "${path/#\~/$HOME}"
+}
+
+check_vocabulary() {
+  local file legacy
+  file="$(vocabulary_file)"
+  legacy="$(config_value whisper prompt "")"
+  if [[ ! -e "$file" ]]; then
+    if [[ -n "$legacy" ]]; then
+      doctor_pass "no ${file} yet: tacet serve moves whisper.prompt into it when it starts"
+    else
+      doctor_pass "no vocabulary yet: add words with 'tacet vocab add'"
+    fi
+    return 0
+  fi
+  if [[ ! -r "$file" ]]; then
+    doctor_fail "${file} is readable" "chmod 600 ${file}"
+    return 1
+  fi
+  doctor_pass "${file} is readable"
+  if [[ -n "$legacy" ]]; then
+    warn "whisper.prompt in ${CONFIG_FILE} is ignored now that ${file} exists; delete it"
+  fi
+  return 0
+}
+
 # Wrapped in a function so tests can substitute a fixture listing without a
 # real launchctl. See tests/test_install_server_doctor.py.
 service_listing() { launchctl list; }
@@ -263,6 +294,7 @@ run_doctor() {
   check_server_installed || true
   check_model      || true
   check_key        || true
+  check_vocabulary || true
   check_services_loaded || true
   check_health     || true
   echo
@@ -297,18 +329,11 @@ render_plists() {
   WHISPER_PORT="$(config_value whisper port 8910)"
   WHISPER_BIN="$(command -v whisper-server || echo /opt/homebrew/bin/whisper-server)"
 
-  # whisper.prompt seeds the decoder at server startup — it is the only place
-  # vocabulary biasing is applied (never per request), so a plist rendered
-  # without it silently degrades every technical term in every transcript and
-  # produces no error anywhere. The value is user text going into XML, so it
-  # is escaped rather than interpolated raw.
-  WHISPER_PROMPT="$(config_value whisper prompt "")"
-  PROMPT_ARGS=""
-  if [[ -n "$WHISPER_PROMPT" ]]; then
-    PROMPT_ESCAPED="$(printf '%s' "$WHISPER_PROMPT" \
-      | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g')"
-    PROMPT_ARGS=$'\n\t\t<string>--prompt</string>\n\t\t<string>'"${PROMPT_ESCAPED}"'</string>'
-  fi
+  # No --prompt. Vocabulary biasing travels with every request now (#30):
+  # `tacet serve` builds the prompt from the vocabulary file and sends it as
+  # whisper-server's per-request `prompt` field, which overrides any startup
+  # flag. A --prompt here would be a second copy that drifts from the file
+  # and changes nothing; the vocabulary file is the one place it lives.
 
   cat > "$LAUNCH_AGENTS/com.drycodeworks.tacet.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -347,7 +372,7 @@ PLIST
 		<string>--language</string>
 		<string>en</string>
 		<string>--no-timestamps</string>
-		<string>--suppress-nst</string>${PROMPT_ARGS}
+		<string>--suppress-nst</string>
 	</array>
 	<key>RunAtLoad</key><true/>
 	<key>KeepAlive</key><true/>

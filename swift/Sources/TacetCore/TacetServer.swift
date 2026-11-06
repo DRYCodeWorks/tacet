@@ -48,6 +48,7 @@ public struct HTTPResponse {
         case 200: return "OK"
         case 400: return "Bad Request"
         case 401: return "Unauthorized"
+        case 404: return "Not Found"
         case 415: return "Unsupported Media Type"
         case 500: return "Internal Server Error"
         case 503: return "Service Unavailable"
@@ -57,7 +58,7 @@ public struct HTTPResponse {
 }
 
 public protocol WhisperTranscribing {
-    func transcribe(wav: Data) async throws -> String
+    func transcribe(wav: Data, prompt: String) async throws -> String
 }
 
 extension WhisperClient: WhisperTranscribing {}
@@ -73,17 +74,21 @@ public final class TacetServer {
     let config: TacetConfig
     let key: String
     let whisper: any WhisperTranscribing
+    let vocabulary: VocabularyStore
     let logger: Logger
 
     public init(config: TacetConfig = .load(),
                 key: String = KeyFile.ensure(),
                 whisper: (any WhisperTranscribing)? = nil,
+                vocabulary: VocabularyStore? = nil,
                 logger: Logger = Logger(label: "tacet")) {
         self.config = config
         self.key = key
         self.whisper = whisper ?? WhisperClient(baseURL: config.whisperURL,
                                                 connectTimeout: config.connectTimeout,
                                                 transcribeTimeout: config.transcribeTimeout)
+        self.vocabulary = vocabulary ?? VocabularyStore(url: config.vocabularyURL,
+                                                        legacyPrompt: config.vocabPrompt)
         self.logger = logger
     }
 
@@ -152,8 +157,24 @@ public final class TacetServer {
 
     /// Run until the process is terminated.
     public func serve() throws {
+        migrateVocabulary()
         _ = try start()
         dispatchMain()
+    }
+
+    /// Move a pre-#30 `whisper.prompt` into the vocabulary file, once. A
+    /// failure is logged, not fatal: until the file exists the store keeps
+    /// serving the legacy prompt, so biasing is never silently lost.
+    func migrateVocabulary() {
+        do {
+            if let note = try vocabulary.migrateIfNeeded(preamble: config.vocabularyPreamble) {
+                logger.info(note)
+            }
+        } catch {
+            logger.error("could not write \(vocabulary.url.path): \(error)")
+        }
+        let v = vocabulary.current()
+        logger.info("vocabulary: \(v.terms.count) terms, \(v.ignored.count) ignored lines")
     }
 
     // MARK: - Connection handling
@@ -245,6 +266,10 @@ public final class TacetServer {
                                 body: Data("{\"status\":\"ok\"}".utf8))
         case ("POST", "/dictate"):
             return dictate(request)
+        case ("GET", "/vocabulary"):
+            return vocabularyList(request)
+        case ("POST", "/vocabulary"):
+            return vocabularyEdit(request)
         default:
             return jsonError(404, "not found")
         }
@@ -255,17 +280,9 @@ public final class TacetServer {
         // drive-by CSRF (a CORS-simple request needs no preflight). X-Tacet-Key
         // and Content-Type audio/wav are both non-safelisted, so requiring them
         // forces a preflight, which fails — no CORS middleware is installed.
-        let presented = request.headers["x-tacet-key"] ?? ""
-        guard ConstantTime.equal(presented, key) else {
-            logger.warning("rejected unauthenticated POST /dictate")
-            return jsonError(401, "missing or invalid X-Tacet-Key")
-        }
+        if let refusal = rejectUnauthenticated(request) { return refusal }
 
-        // Ignore parameters: `audio/wav; charset=binary` is still audio/wav.
-        let mediaType = (request.headers["content-type"] ?? "")
-            .split(separator: ";").first?
-            .trimmingCharacters(in: .whitespaces)
-            .lowercased() ?? ""
+        let mediaType = Self.mediaType(request)
         guard mediaType == "audio/wav" else {
             logger.warning("rejected POST /dictate with content-type \(mediaType)")
             return jsonError(415, "expected Content-Type: audio/wav")
@@ -298,8 +315,10 @@ public final class TacetServer {
             return jsonText("")
         }
 
+        let prompt = vocabulary.current().prompt(preamble: config.vocabularyPreamble,
+                                                 maxTokens: config.maxPromptTokens)
         let raw = sync {
-            try await self.whisper.transcribe(wav: request.body)
+            try await self.whisper.transcribe(wav: request.body, prompt: prompt.text)
         }
         let text: String
         do {
@@ -317,8 +336,28 @@ public final class TacetServer {
 
         // Log the LENGTH only, never the text — transcripts are private and
         // must never settle into a world-readable file in /tmp.
-        logger.info("transcribed \(sanitised.count) chars (rms \(String(format: "%.1f", amplitude)), threshold \(String(format: "%.1f", config.silenceRMSThreshold)))")
+        logger.info("transcribed \(sanitised.count) chars (rms \(String(format: "%.1f", amplitude)), threshold \(String(format: "%.1f", config.silenceRMSThreshold)); prompt \(prompt.included.count) terms, ~\(prompt.estimatedTokens) tokens)")
         return jsonText(sanitised)
+    }
+
+    /// Nil when the request carries the shared key; otherwise the 401 to send.
+    ///
+    /// The key is half of the CSRF defence: X-Tacet-Key is a non-safelisted
+    /// header, so a browser must preflight it, and the preflight fails because
+    /// no CORS handling exists. Each route's required Content-Type is the other.
+    func rejectUnauthenticated(_ request: HTTPRequest) -> HTTPResponse? {
+        let presented = request.headers["x-tacet-key"] ?? ""
+        if ConstantTime.equal(presented, key) { return nil }
+        logger.warning("rejected unauthenticated \(request.method) \(request.target)")
+        return jsonError(401, "missing or invalid X-Tacet-Key")
+    }
+
+    /// The Content-Type without parameters: `audio/wav; charset=binary` is audio/wav.
+    static func mediaType(_ request: HTTPRequest) -> String {
+        (request.headers["content-type"] ?? "")
+            .split(separator: ";").first?
+            .trimmingCharacters(in: .whitespaces)
+            .lowercased() ?? ""
     }
 
     /// The server's error detail must be branched by cause so a malformed
@@ -344,7 +383,7 @@ public final class TacetServer {
         return HTTPResponse(status: 200, contentType: "application/json", body: Data(body.utf8))
     }
 
-    private func jsonError(_ status: Int, _ detail: String) -> HTTPResponse {
+    func jsonError(_ status: Int, _ detail: String) -> HTTPResponse {
         let escaped = detail
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")

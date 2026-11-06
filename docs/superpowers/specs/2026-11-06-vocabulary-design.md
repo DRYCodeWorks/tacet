@@ -2,7 +2,7 @@
 
 Issue: [#30](https://github.com/DRYCodeWorks/tacet/issues/30). Supersedes #23 (phrase repair) and #24 (empty default prompt).
 Date: 2026-11-06
-Revision: 2. D1–D4 are agreed (see "Decided"); nothing here is built.
+Revision: 3. D1–D4 are agreed (see "Decided"). Terms are built; corrections (D2's second kind, D3) are not yet.
 
 ## Why
 
@@ -185,23 +185,31 @@ Both are thin. The server validates everything.
   before an uppercase letter. That splits `ASP.NET` into `ASP. NET` and `U.S.` into
   `U. S.`, both in whisper's own output today and in any dotted replacement. Fix it
   separately; it isn't specific to vocabulary.
-- **Health.** `/health` reports how many terms and corrections are loaded and how many
-  terms are in the prompt. `--doctor` fails if the file is unreadable.
+- **Health.** `/health` is unchanged, because the doctor and the agent both probe it.
+  Instead the server logs the term count at start and the prompt's term and token
+  counts on every dictation, `tacet vocab list` reports the budget and any ignored
+  lines, and `install-server.sh --doctor` fails if the file exists but is unreadable.
   - Losing the vocabulary silently is the 2026-08-05 failure mode: the prompt fell out
     of the plist and nothing reported it.
-- **CLI on PATH.** The binary lives inside `Tacet.app` and is not on PATH today.
-  `install-client.sh` symlinks `~/.local/bin/tacet`, and the cask declares a `binary`.
+- **CLI on PATH.** Not done. The binary lives inside `Tacet.app`, and the skill finds it
+  in `~/Applications` or `/Applications` itself; the README suggests an alias.
 
 ## Migration
 
-- **Install.** `install-server.sh` checks whether `whisper.prompt` is non-empty and no
-  vocabulary file exists. If so, it splits the `Vocabulary:` list into terms, moves the
-  text before it into `preamble`, and prints the result.
+- **Server start.** `tacet serve` checks whether `whisper.prompt` is non-empty and no
+  vocabulary file exists. If so, it splits the `Vocabulary:` list into terms, writes
+  the file and logs what it did. It warns if the text before the list differs from
+  `[vocabulary] preamble`, which defaults to "Technical dictation.".
+  - The server does this, not the installer, so it is unit-tested in Swift and also
+    covers a server whose binary was updated without re-running the installer.
+  - Until the file exists, the server serves the legacy prompt's terms. Its prompt field
+    always overrides the plist's `--prompt`, so sending an empty prompt then would
+    silently drop the biasing.
 - **One copy of the prompt.** The whisper-server plist stops getting `--prompt` in the
   same change, so it never exists in two places.
 - **Tests.** The drift-guard tests at `tests/test_install_server_doctor.py:272-300` are
   rewritten to assert the plist has no `--prompt` and that the migration ran.
-- **Doctor.** `--doctor` warns if `whisper.prompt` is still set.
+- **Doctor.** `--doctor` warns if `whisper.prompt` is still set once the file exists.
 - **Eval harness.** PR #29's harness passes `--prompt` as a server argument. It must send
   the prompt per request instead, or it measures a different path from production.
 

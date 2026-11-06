@@ -13,7 +13,10 @@ public struct TacetConfig {
     public var whisperHost: String         // always 127.0.0.1 (not configurable)
     public var whisperPort: Int            // whisper.port, default 8910
     public var modelPath: String           // whisper.model
-    public var vocabPrompt: String         // whisper.prompt
+    public var vocabPrompt: String         // whisper.prompt (pre-#30; migrated, then ignored)
+    public var vocabularyPath: String      // vocabulary.path
+    public var vocabularyPreamble: String  // vocabulary.preamble
+    public var maxPromptTokens: Int        // vocabulary.max_prompt_tokens
     public var silenceRMSThreshold: Double // audio.silence_rms_threshold, default 150.0
     public var transcribeTimeout: Double   // 60
     public var connectTimeout: Double      // 5
@@ -23,6 +26,9 @@ public struct TacetConfig {
                 whisperPort: Int = 8910,
                 modelPath: String = "~/.local/share/whisper-cpp/ggml-large-v3-turbo.bin",
                 vocabPrompt: String = "",
+                vocabularyPath: String = "~/.config/tacet/vocabulary.txt",
+                vocabularyPreamble: String = "Technical dictation.",
+                maxPromptTokens: Int = 150,
                 silenceRMSThreshold: Double = 150.0,
                 transcribeTimeout: Double = 60.0,
                 connectTimeout: Double = 5.0) {
@@ -32,6 +38,9 @@ public struct TacetConfig {
         self.whisperPort = whisperPort
         self.modelPath = modelPath
         self.vocabPrompt = vocabPrompt
+        self.vocabularyPath = vocabularyPath
+        self.vocabularyPreamble = vocabularyPreamble
+        self.maxPromptTokens = maxPromptTokens
         self.silenceRMSThreshold = silenceRMSThreshold
         self.transcribeTimeout = transcribeTimeout
         self.connectTimeout = connectTimeout
@@ -61,6 +70,11 @@ public struct TacetConfig {
                 cfg.modelPath = w.string("model") ?? cfg.modelPath
                 cfg.vocabPrompt = w.string("prompt") ?? cfg.vocabPrompt
             }
+            if let v = parsed.section("vocabulary") {
+                cfg.vocabularyPath = v.string("path") ?? cfg.vocabularyPath
+                cfg.vocabularyPreamble = v.string("preamble") ?? cfg.vocabularyPreamble
+                cfg.maxPromptTokens = v.int("max_prompt_tokens") ?? cfg.maxPromptTokens
+            }
             if let a = parsed.section("audio") {
                 cfg.silenceRMSThreshold = a.double("silence_rms_threshold") ?? cfg.silenceRMSThreshold
             }
@@ -71,6 +85,11 @@ public struct TacetConfig {
     }
 
     public var whisperURL: String { "http://\(whisperHost):\(whisperPort)" }
+
+    /// `vocabulary.path` with a leading `~` expanded.
+    public var vocabularyURL: URL {
+        URL(fileURLWithPath: (vocabularyPath as NSString).expandingTildeInPath)
+    }
 }
 
 // MARK: - Minimal TOML subset parser

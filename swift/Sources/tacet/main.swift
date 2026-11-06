@@ -15,10 +15,11 @@ let args = CommandLine.arguments
 
 func writeUsage(to handle: FileHandle) {
     handle.write(Data("""
-    usage: tacet [serve|agent]
+    usage: tacet [serve|agent|vocab]
 
       serve    run the transcription server (whisper backend, HTTP)
       agent    run the menu-bar dictation agent (hotkey, record, paste)
+      vocab    list or edit the vocabulary (tacet vocab --help)
       --help   this message
 
     With no arguments tacet runs the agent.
@@ -55,6 +56,10 @@ case "agent", "":
 // Usage goes to stdout and exits 0 when it was ASKED for, and to stderr with a
 // non-zero exit when it was not. Scripts check one or the other; conflating
 // them is how `--help` ends up looking like a failure.
+// A plain command-line tool: no NSApplication, no menu bar, no microphone.
+case "vocab":
+    exit(VocabCommand.run(Array(args.dropFirst(2))))
+
 case "--help", "-h", "help":
     writeUsage(to: .standardOutput)
     exit(0)

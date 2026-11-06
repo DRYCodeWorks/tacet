@@ -3,8 +3,9 @@ import Foundation
 /// HTTP client for whisper.cpp's whisper-server, port of `src/tacet/whisper.py`.
 ///
 /// The server holds the model resident; a fresh `whisper-cli` per utterance
-/// would reload ~1.5 GB every time. Vocabulary biasing is applied at server
-/// startup via `--prompt`, not per request.
+/// would reload ~1.5 GB every time. Vocabulary biasing travels with each
+/// request as the `prompt` field (#30), so editing the vocabulary takes effect
+/// on the next dictation without restarting whisper-server.
 public enum WhisperError: Error, CustomStringConvertible {
     case unavailable(String)
     case malformed(String)
@@ -32,9 +33,14 @@ public struct WhisperClient {
     /// The SQLite-free hand-rolled multipart is the point of the stdlib build
     /// (issue #4): outbound multipart is one of the few things a library got
     /// right that we now own.
-    public func transcribe(wav: Data) async throws -> String {
+    ///
+    /// `prompt` is always sent, even empty. whisper-server 1.8.4 reads the field
+    /// per request (examples/server/server.cpp:561) and falls back to its own
+    /// `--prompt` only when the field is absent, so omitting it would let a
+    /// stale startup flag decide the biasing instead of the vocabulary file.
+    public func transcribe(wav: Data, prompt: String) async throws -> String {
         let boundary = "TacetBoundary\(UUID().uuidString)"
-        let body = Self.makeMultipart(boundary: boundary, wav: wav)
+        let body = Self.makeMultipart(boundary: boundary, wav: wav, prompt: prompt)
 
         var req = URLRequest(url: URL(string: baseURL + "/inference")!)
         req.httpMethod = "POST"
@@ -66,7 +72,7 @@ public struct WhisperClient {
         }
     }
 
-    static func makeMultipart(boundary: String, wav: Data) -> Data {
+    static func makeMultipart(boundary: String, wav: Data, prompt: String = "") -> Data {
         var body = Data()
         func appendASCII(_ s: String) { body.append(Data(s.utf8)) }
 
@@ -76,7 +82,7 @@ public struct WhisperClient {
         body.append(wav)
         appendASCII("\r\n")
 
-        for (name, value) in [("response_format", "json"), ("temperature", "0.0")] {
+        for (name, value) in [("response_format", "json"), ("temperature", "0.0"), ("prompt", prompt)] {
             appendASCII("--\(boundary)\r\n")
             appendASCII("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n")
             appendASCII(value)

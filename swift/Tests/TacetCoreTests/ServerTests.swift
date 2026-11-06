@@ -4,9 +4,11 @@ import XCTest
 /// A stub transcription backend so server tests need no whisper-server.
 final class StubWhisper: WhisperTranscribing {
     var result: Result<String, Error>
+    private(set) var prompts: [String] = []
     init(_ result: Result<String, Error>) { self.result = result }
-    func transcribe(wav: Data) async throws -> String {
-        try result.get()
+    func transcribe(wav: Data, prompt: String) async throws -> String {
+        prompts.append(prompt)
+        return try result.get()
     }
 }
 

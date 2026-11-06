@@ -269,33 +269,19 @@ class TestPlistRendering:
         _, plists = self._render(tmp_path, cfg)
         assert "9110" in plists["com.drycodeworks.tacet-whisper.plist"]
 
-    def test_the_vocab_prompt_reaches_whispers_plist(self, tmp_path):
-        # Vocabulary biasing is applied once, at whisper-server startup. A plist
-        # rendered without --prompt degrades every technical term in every
-        # transcript and reports nothing: the service starts, answers, and is
-        # simply worse. That is what happened between the launchd templates and
-        # this renderer, so it is asserted rather than assumed.
+    def test_the_whisper_plist_never_carries_a_prompt(self, tmp_path):
+        # Since #30 the vocabulary travels with every request from `tacet
+        # serve`, and whisper-server's per-request field overrides a startup
+        # --prompt. Rendering whisper.prompt here as well would leave a second
+        # copy that drifts from the vocabulary file and does nothing. Even a
+        # prompt that would break XML must not reach the plist.
         cfg = (self.ONE_MACHINE
-               + 'prompt = "Technical dictation. Vocabulary: ClickHouse, tmux."\n')
+               + 'prompt = "Technical dictation. Vocabulary: R&D <stack>, tmux."\n')
         _, plists = self._render(tmp_path, cfg)
         w = plists["com.drycodeworks.tacet-whisper.plist"]
-        assert "<string>--prompt</string>" in w
-        assert "ClickHouse" in w
-
-    def test_the_prompt_is_xml_escaped(self, tmp_path):
-        # The prompt is user text landing inside XML. An unescaped & or < makes
-        # the plist unparseable, which launchd answers with a restart loop.
-        cfg = self.ONE_MACHINE + 'prompt = "R&D <stack>"\n'
-        _, plists = self._render(tmp_path, cfg)
-        w = plists["com.drycodeworks.tacet-whisper.plist"]
-        assert "R&amp;D &lt;stack&gt;" in w
+        assert "--prompt" not in w
+        assert "tmux" not in w
         ET.fromstring(w)
-
-    def test_an_empty_prompt_omits_the_flag(self, tmp_path):
-        # An empty --prompt is not the same as no --prompt: whisper takes the
-        # empty string as the initial prompt.
-        _, plists = self._render(tmp_path, self.ONE_MACHINE)
-        assert "--prompt" not in plists["com.drycodeworks.tacet-whisper.plist"]
 
     def test_non_speech_tokens_stay_suppressed(self, tmp_path):
         # Without these, whisper emits "[BLANK_AUDIO]" and timestamp prefixes
@@ -374,3 +360,51 @@ class TestPlistRendering:
         cfg = f'[server]\nbind = "{host}"\nport = 8911\n\n[whisper]\nport = 8910\n'
         rc, _ = self._render(tmp_path, cfg)
         assert rc == 0
+
+
+def run_check_vocabulary(home: Path, config: str, vocabulary: str | None) -> tuple[int, str]:
+    """Run check_vocabulary against a fabricated config and vocabulary file."""
+    cfg_dir = home / ".config" / "tacet"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    (cfg_dir / "config.toml").write_text(config)
+    if vocabulary is not None:
+        (cfg_dir / "vocabulary.txt").write_text(vocabulary)
+    program = f"""
+    source {SCRIPT}
+    CONFIG_DIR="{cfg_dir}"
+    CONFIG_FILE="{cfg_dir}/config.toml"
+    check_vocabulary
+    """
+    r = subprocess.run(["bash", "-c", program], capture_output=True, text=True,
+                       env={"PATH": "/usr/bin:/bin", "HOME": str(home)})
+    return r.returncode, _ANSI.sub("", r.stdout + r.stderr)
+
+
+class TestCheckVocabulary:
+    """The vocabulary file replaced whisper.prompt (#30). --doctor says which
+    one is in effect, because a leftover whisper.prompt now does nothing."""
+
+    LEGACY = '[whisper]\nprompt = "Technical dictation. Vocabulary: tmux."\n'
+
+    def test_no_file_and_no_prompt_passes(self, tmp_path):
+        status, out = run_check_vocabulary(tmp_path, "", None)
+        assert status == 0, out
+        assert "tacet vocab add" in out
+
+    def test_a_legacy_prompt_without_a_file_will_be_migrated(self, tmp_path):
+        status, out = run_check_vocabulary(tmp_path, self.LEGACY, None)
+        assert status == 0, out
+        assert "moves whisper.prompt into it" in out
+
+    def test_a_leftover_prompt_beside_the_file_is_flagged(self, tmp_path):
+        status, out = run_check_vocabulary(tmp_path, self.LEGACY, "tmux\n")
+        assert status == 0, out
+        assert "whisper.prompt" in out and "is ignored" in out
+
+    def test_a_configured_path_is_honoured(self, tmp_path):
+        custom = tmp_path / "elsewhere.txt"
+        custom.write_text("tmux\n")
+        status, out = run_check_vocabulary(
+            tmp_path, f'[vocabulary]\npath = "{custom}"\n', None)
+        assert status == 0, out
+        assert f"{custom} is readable" in out

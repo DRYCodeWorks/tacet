@@ -28,13 +28,22 @@ port = 8910
 # Path to a whisper.cpp GGML model. `~` is expanded.
 model = "~/.local/share/whisper-cpp/ggml-large-v3-turbo.bin"
 
-# Vocabulary biasing: whisper-server's --prompt seeds the decoder. This is the
-# cheapest accuracy win available — proper nouns and jargon that come back
-# mangled usually come back correct once listed here. Empty by default.
-#
-# Use your own terms, not these. Example:
-# prompt = "Technical dictation. Vocabulary: Postgres, Kubernetes, Terraform, tmux, repo, PR, schema, migration, cluster, CLI, API, JSON, YAML, Docker."
-prompt = ""
+# whisper.prompt is retired. Add words with `tacet vocab add` instead (see
+# [vocabulary] below). If an old config still sets it, the server moves its
+# terms into the vocabulary file the first time it starts, then ignores it.
+
+[vocabulary]
+# The word list tacet sends to whisper with every dictation, one term per line.
+# Edit it with `tacet vocab add|remove|list`, or by hand. `~` is expanded.
+path = "~/.config/tacet/vocabulary.txt"
+
+# Text placed before the list in whisper's prompt.
+preamble = "Technical dictation."
+
+# Whisper reads about 223 prompt tokens and silently drops the start of
+# anything longer. tacet's count is an estimate, so it stays well below that;
+# the newest terms are kept when the list doesn't fit.
+max_prompt_tokens = 150
 
 [audio]
 # Audio quieter than this RMS (signed-16-bit scale) is treated as silence and
