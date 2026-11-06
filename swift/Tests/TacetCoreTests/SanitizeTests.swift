@@ -30,6 +30,19 @@ final class SanitizeTests: XCTestCase {
             "Version 3.14 is on example.com")
     }
 
+    func testDoesNotSplitInitialismsOrDottedNames() {
+        // #31: the sentence repair split names whisper had written correctly.
+        XCTAssertEqual(
+            Sanitize.sanitize("The U.S.A. team ships ASP.NET, VB.NET and Node.JS, e.g.Postgres"),
+            "The U.S.A. team ships ASP.NET, VB.NET and Node.JS, e.g.Postgres")
+    }
+
+    func testStillRepairsSentencesThatEndInAnAcronym() {
+        XCTAssertEqual(
+            Sanitize.sanitize("Merged the PR.Then it shipped.I think so"),
+            "Merged the PR. Then it shipped. I think so")
+    }
+
     func testHostileEscapeSequenceNeutralised() {
         // A full CSI sequence must never survive as a control sequence.
         XCTAssertEqual(Sanitize.sanitize("ok\u{001B}[31mred"), "ok [31mred")

@@ -31,22 +31,44 @@ public enum Sanitize {
     /// insert spacing after `.?!` before uppercase text, collapse whitespace,
     /// and trim.
     public static func sanitize(_ raw: String) -> String {
+        let scalars = raw.unicodeScalars.map { isControl($0) || isLineSeparator($0) ? " " : $0 }
         var out = String.UnicodeScalarView()
-        var sentenceBoundaryPending = false
-        for scalar in raw.unicodeScalars {
-            let value = isControl(scalar) || isLineSeparator(scalar) ? " " : scalar
-            if value.properties.isWhitespace {
-                sentenceBoundaryPending = false
-            } else if sentenceBoundaryPending && value.properties.isUppercase {
+        var boundary: Int?  // index of `.?!` not yet followed by whitespace
+        for (i, scalar) in scalars.enumerated() {
+            if scalar.properties.isWhitespace {
+                boundary = nil
+            } else if let b = boundary, scalar.properties.isUppercase,
+                      isSentenceBreak(scalars, punctuation: b, nextWord: i) {
                 out.append(" ")
             }
-            out.append(value)
-            sentenceBoundaryPending = isSentenceEnd(value)
-                || (sentenceBoundaryPending && isClosingQuoteOrBracket(value))
+            out.append(scalar)
+            if isSentenceEnd(scalar) {
+                boundary = i
+            } else if !isClosingQuoteOrBracket(scalar) {
+                boundary = nil
+            }
         }
         return String(out)
             .split(whereSeparator: { $0.isWhitespace })
             .joined(separator: " ")
+    }
+
+    /// Whether the uppercase word at `nextWord`, written straight after the
+    /// punctuation at `punctuation`, starts a new sentence.
+    ///
+    /// Whisper sometimes drops the space between sentences ("done.Then"), but
+    /// it also writes names and initialisms that look the same: "ASP.NET",
+    /// "U.S.". Splitting those corrupts words it got right, so two shapes are
+    /// left alone. A rare missed repair ("done.API") is the price (#31).
+    static func isSentenceBreak(_ s: [Unicode.Scalar], punctuation p: Int, nextWord n: Int) -> Bool {
+        // An initialism: the period follows a single letter ("U.S.", "e.g.").
+        let singleLetterBefore = p >= 1 && s[p - 1].properties.isAlphabetic
+            && (p < 2 || !s[p - 2].properties.isAlphabetic)
+        if s[p] == "." && singleLetterBefore { return false }
+        // A dotted all-caps name: the next word is capitals only (".NET", ".JS").
+        let word = s[n...].prefix(while: { $0.properties.isAlphabetic })
+        let allCaps = word.count >= 2 && !word.contains(where: { $0.properties.isLowercase })
+        return !allCaps
     }
 
     private static func isSentenceEnd(_ scalar: Unicode.Scalar) -> Bool {
